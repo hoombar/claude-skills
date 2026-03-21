@@ -1,12 +1,12 @@
 ---
 name: todoist
 description: Manage Todoist tasks via the CLI. Use when the user wants to add a task, list tasks, check today's tasks, complete tasks, delete tasks, update tasks, or manage projects/labels in Todoist. Triggers on phrases like "add a task", "todoist", "what's due today", "my tasks".
-allowed-tools: Bash(npx @doist/todoist-cli *)
+allowed-tools: Bash(td *)
 ---
 
 # Todoist CLI Skill
 
-You help the user manage their Todoist tasks using the `td` CLI (`npx @doist/todoist-cli`).
+You help the user manage their Todoist tasks using the `td` CLI.
 
 ## Command Reference
 
