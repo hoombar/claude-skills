@@ -8,6 +8,8 @@ A collection of reusable [Claude Code](https://docs.anthropic.com/en/docs/claude
 |-------|-------------|
 | [mermaid-to-png](skills/mermaid-to-png/) | Saves a Mermaid diagram as a PNG image |
 | [promote-permissions](skills/promote-permissions/) | Find permissions Claude requested during a session and offer to add them permanently |
+| [todoist](skills/todoist/) | Manage Todoist tasks via the CLI |
+| [youtube-podcast-generator](skills/youtube-podcast-generator/) | Generate NotebookLM audio podcasts from curated YouTube channels |
 
 ## Installation
 
