@@ -30,3 +30,4 @@ Save a Mermaid diagram as a PNG to `~/Desktop/mermaid diagrams/`.
 - If the diagram has parse errors, fix them before converting.
 - Use scale factor `-s 2` for crisp output by default.
 - If the user wants a different background, use `-b white` or whatever they request instead of transparent.
+- If the user wants to generate a new diagram from code (not just render an existing one), use the `mermaid-from-code` skill instead.
