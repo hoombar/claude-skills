@@ -8,7 +8,24 @@ When generating mermaid diagrams from code, LLMs often make confident but incorr
 
 ## How It Works
 
-![Pipeline overview](pipeline.png)
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### Overview
+
+<img src="pipeline.png" alt="Pipeline overview" width="100%">
+
+</td>
+<td width="50%" valign="top">
+
+### In Depth
+
+<img src="pipeline-detailed.png" alt="Detailed pipeline" width="100%">
+
+</td>
+</tr>
+</table>
 
 1. **Explorer** maps the relevant code surface area (components, relationships, entry points)
 2. **Generator** produces a mermaid diagram plus a structured evidence log — every node and edge cites the file and line that justifies it
@@ -28,15 +45,6 @@ The key innovation is that the critic's prompt is deliberately constructed to pr
 - **Type-specific audit** — applies structural rules for the specific diagram type (flowchart, sequence, class, state, ER)
 
 The critic also does NOT receive the generator's evidence log, forcing genuinely independent verification.
-
-### Detailed Pipeline
-
-<details>
-<summary>Click to expand the full pipeline diagram</summary>
-
-![Detailed pipeline](pipeline-detailed.png)
-
-</details>
 
 ## Installation
 
