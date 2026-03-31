@@ -68,6 +68,11 @@ Spawn a **general-purpose** agent with the explorer's output and the evidence lo
   1. A mermaid diagram in a code block
   2. An evidence log following the format exactly
   3. A list of deliberate omissions with reasons
+- **Mermaid readability rules** (include these in the generator prompt):
+  - Keep edge labels to 3-4 words max — mermaid's layout engine does not avoid label collisions, so long labels will overlap and become unreadable
+  - Prefer a single edge over bidirectional edges between the same nodes — two edges with labels will almost always collide
+  - Use node text and comments for detail; edges should only carry short annotations
+  - Avoid `\n` in edge labels where possible — multi-line edge labels worsen collisions
 
 **Agent config:**
 - `subagent_type: general-purpose`
