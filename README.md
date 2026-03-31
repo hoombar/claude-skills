@@ -6,6 +6,7 @@ A collection of reusable [Claude Code](https://docs.anthropic.com/en/docs/claude
 
 | Skill | Description |
 |-------|-------------|
+| [mermaid-from-code](skills/mermaid-from-code/) | Generate verified mermaid diagrams from codebases using adversarial generator+critic agents |
 | [mermaid-to-png](skills/mermaid-to-png/) | Saves a Mermaid diagram as a PNG image |
 | [promote-permissions](skills/promote-permissions/) | Find permissions Claude requested during a session and offer to add them permanently |
 | [todoist](skills/todoist/) | Manage Todoist tasks via the CLI |
