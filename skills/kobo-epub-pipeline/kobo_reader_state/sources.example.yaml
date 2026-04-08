@@ -1,0 +1,123 @@
+# Kobo Daily Reader — Source Configuration
+# Edit this file to add/remove sources and tune scoring.
+# Script reads this on every run; no restart needed.
+
+# ---------------------------------------------------------------------------
+# arXiv — primary AI research papers
+# ---------------------------------------------------------------------------
+arxiv:
+  categories:
+    - cs.AI    # Artificial Intelligence
+    - cs.CL    # Computation and Language (NLP)
+    - cs.LG    # Machine Learning
+  max_results_per_category: 15
+  days_back: 3
+
+# ---------------------------------------------------------------------------
+# RSS feeds — lab blogs and curated newsletters
+# authority: 0–1 weighting for the scoring model (higher = boosted)
+#
+# NOTE: Some of these URLs may need verification — RSS feed paths occasionally
+# change. If a feed returns no entries, update the URL.
+# ---------------------------------------------------------------------------
+rss_feeds:
+  # First-party lab blogs
+  - name: "Anthropic Blog"
+    url: "https://www.anthropic.com/news/rss"
+    authority: 1.0
+
+  - name: "OpenAI Blog"
+    url: "https://openai.com/news/rss.xml"
+    authority: 1.0
+
+  - name: "Google DeepMind Blog"
+    url: "https://deepmind.google/discover/blog/rss.xml"
+    authority: 1.0
+
+  - name: "Google Research Blog"
+    url: "https://ai.googleblog.com/feeds/posts/default"
+    authority: 0.90
+
+  - name: "Meta AI Blog"
+    url: "https://ai.meta.com/blog/rss/"
+    authority: 0.90
+
+  # Curated newsletters
+  - name: "Simon Willison"
+    url: "https://simonwillison.net/atom/everything/"
+    authority: 0.85
+
+  - name: "Interconnects (Nathan Lambert)"
+    url: "https://www.interconnects.ai/feed"
+    authority: 0.85
+
+  - name: "Import AI (Jack Clark)"
+    url: "https://jack-clark.net/feed/"
+    authority: 0.85
+
+  - name: "The Batch (DeepLearning.AI)"
+    url: "https://www.deeplearning.ai/the-batch/rss/"
+    authority: 0.80
+
+# ---------------------------------------------------------------------------
+# Social signals — discovery layer only, NOT used as article content
+# These boost the priority score of topics that are trending in the community.
+# ---------------------------------------------------------------------------
+social_signals:
+  hacker_news:
+    enabled: true
+    min_points: 100   # ignore low-engagement stories
+    days_back: 3
+
+  reddit:
+    enabled: true
+    subreddits:
+      - MachineLearning
+      - LocalLLaMA
+    min_score: 50
+    days_back: 3
+
+# ---------------------------------------------------------------------------
+# Scoring weights — must sum to 1.0
+# authority:  source prestige (arXiv, lab blog > newsletter)
+# social:     HN/Reddit engagement signal
+# recency:    exponential decay from publication date
+# diversity:  penalty if same source appeared in recent articles
+# ---------------------------------------------------------------------------
+scoring:
+  authority_weight: 0.40
+  social_weight:    0.30
+  recency_weight:   0.20
+  diversity_weight: 0.10
+  recency_half_life_days: 3  # score halves every N days
+
+# ---------------------------------------------------------------------------
+# Generation settings
+# ---------------------------------------------------------------------------
+generation:
+  model: "claude-opus-4-6"
+  target_words: 4000          # ~20 min read
+  max_source_chars: 40000     # text fed to the generator (stay well under arg limits)
+
+# ---------------------------------------------------------------------------
+# Delivery backend
+#
+# Recommended for Kobo cloud pull: gws_drive mode.
+# The script uploads EPUBs to a Drive folder, and Kobo pulls when it syncs.
+#
+# mode:
+#   pull      -> stage file in inbox_dir
+#   gws_drive -> upload directly to Google Drive via gws CLI machine profile
+#   none      -> build only, no delivery
+# ---------------------------------------------------------------------------
+delivery:
+  mode: "gws_drive"
+  pull:
+    inbox_dir: "~/kobo_pull_inbox"   # sync this folder to Drive/Dropbox
+    link_latest: true                # writes Daily_Deep_Dive_Latest.kepub.epub
+    post_stage_command: ""           # optional command; placeholders: {file} {name} {dir}
+  gws_drive:
+    folder_id: "REPLACE_WITH_YOUR_DRIVE_FOLDER_ID"
+    config_dir: ""                                   # optional gws config dir override
+    upload_latest_alias: false
+    latest_alias_name: "Daily_Deep_Dive_Latest.kepub.epub"
