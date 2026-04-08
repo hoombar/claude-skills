@@ -1,0 +1,25 @@
+flowchart TD
+  A[Run: cron or manual] --> B[Load sources.yaml and queue.json]
+  B --> C[Discover candidates<br/>arXiv + RSS]
+  C --> D[Fetch social signals<br/>HN + Reddit]
+  D --> E[Score and update pending queue]
+  E --> F{--dry-run?}
+  F -->|yes| G[Save queue and exit]
+  F -->|no| H[Select topic<br/>top score or --topic-id]
+  H --> I[Fetch full content<br/>PDF, HTML, or summary fallback]
+  I --> J[Generate draft<br/>claude --print]
+  J --> K[Run critic pass<br/>JSON concerns]
+  K --> L[Assemble final Markdown<br/>+ Critic Notes]
+  L --> M[Render Mermaid blocks to PNG]
+  M --> N[Build EPUB with pandoc]
+  N --> O{delivery.mode}
+  O -->|gws_drive| P[Upload EPUB to Google Drive]
+  O -->|pull| Q[Copy EPUB to local inbox]
+  O -->|none| R[Skip delivery]
+  P --> S{Delivery confirmed?}
+  Q --> S
+  R --> S
+  S -->|yes| T[Move topic pending -> processed]
+  S -->|no| U[Keep topic in pending for retry]
+  T --> V[Save queue.json]
+  U --> V
