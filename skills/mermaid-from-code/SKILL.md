@@ -64,6 +64,7 @@ Spawn a **general-purpose** agent with the explorer's output and the evidence lo
 - The user's original request/scope
 - The chosen diagram type
 - The full content of `references/evidence-log-format.md`
+- The full content of `references/renderer-compatibility.md` — this is non-negotiable. Generator output that violates the compatibility rules will fail Step 3 validation and force a retry, wasting tokens.
 - Instruction to produce:
   1. A mermaid diagram in a code block
   2. An evidence log following the format exactly
@@ -73,6 +74,14 @@ Spawn a **general-purpose** agent with the explorer's output and the evidence lo
   - Prefer a single edge over bidirectional edges between the same nodes — two edges with labels will almost always collide
   - Use node text and comments for detail; edges should only carry short annotations
   - Avoid `\n` in edge labels where possible — multi-line edge labels worsen collisions
+- **Renderer-compatibility rules** (summary — full rationale in `references/renderer-compatibility.md`):
+  - Do NOT use `subgraph` blocks. Convey grouping via `:::className` + `classDef` on a flat node structure.
+  - Put a blank line between every statement.
+  - Flush-left all content (no indentation inside the mermaid block).
+  - Quote every non-alphanumeric label: `(["text"])`, `["text"]`, `[/"text"/]`, `|"edge"|`.
+  - Apply classes inline at node definition (`A["foo"]:::myClass`), not via separate `class X,Y myClass` statements.
+  - Put `classDef` statements at the bottom, one per line, with blank lines between them.
+  - No `<br/>`, no `%%` comments, no `&` (use "and"), no semicolons, no `direction TB` inside subgraphs.
 
 **Agent config:**
 - `subagent_type: general-purpose`
@@ -81,17 +90,29 @@ Store both the mermaid source and the evidence log.
 
 ---
 
-## Step 3: Syntax Validation
+## Step 3: Syntax Validation (dual-form)
 
-This is a mechanical check — no agent needed.
+This is a mechanical check — no agent needed. Both the original AND a collapsed form must pass `mmdc`, because the collapsed form simulates stricter real-world renderers that `mmdc` alone will not catch.
 
-1. Write the mermaid source to `/tmp/mermaid_temp.mmd`
-2. Run: `mmdc -i /tmp/mermaid_temp.mmd -o /tmp/mermaid_test.png -b transparent -s 2`
-3. If mmdc succeeds: proceed to Step 4
-4. If mmdc fails: read the error, fix the mermaid syntax, retry (max 3 attempts)
-5. If still failing after 3 attempts: show the error to the user and ask for guidance
+### 3a. Original form
 
-Clean up `/tmp/mermaid_test.png` after validation.
+1. Write the mermaid source to `/tmp/mermaid_temp.mmd`.
+2. Run: `mmdc -i /tmp/mermaid_temp.mmd -o /tmp/mermaid_test.png -b transparent -s 2`.
+3. If `mmdc` fails: read the error, fix the syntax, retry (max 3 attempts).
+4. If still failing after 3 attempts: show the error to the user and ask for guidance.
+
+### 3b. Collapsed form (renderer-compatibility check)
+
+Simulate the worst common renderer behaviour: non-blank lines within a paragraph joined by spaces, blank lines preserved. The transform is documented in `references/renderer-compatibility.md` (section "Python transform for the collapsed form"). Use the same transform, or equivalent shell logic.
+
+1. Produce the collapsed form from `/tmp/mermaid_temp.mmd`, write it to `/tmp/mermaid_collapsed.mmd`.
+2. Run: `mmdc -i /tmp/mermaid_collapsed.mmd -o /tmp/mermaid_collapsed_test.png -b transparent -s 2`.
+3. If the collapsed form fails: the diagram violates a renderer-compatibility rule. Apply the rules in `references/renderer-compatibility.md` (remove subgraphs, add blank lines, flush-left content, quote labels, etc.) and retry both 3a and 3b. Max 3 attempts.
+4. If the collapsed form still fails after 3 attempts: flag it to the user — the diagram is at risk of failing in some of their tooling — and surface the specific rule violation.
+
+Clean up the test PNG files after validation.
+
+**Do not skip step 3b.** `mmdc` is more permissive than GitHub's in-browser renderer, which is more permissive than some third-party previews. The collapsed form catches the class of errors that `mmdc` alone will not.
 
 ---
 
