@@ -7,6 +7,7 @@ A collection of reusable [Claude Code](https://docs.anthropic.com/en/docs/claude
 | Skill | Description |
 |-------|-------------|
 | [kobo-epub-pipeline](skills/kobo-epub-pipeline/) | Generate and deliver Kobo deep-dive EPUBs with queueing, critic pass, and Google Drive pull sync |
+| [obsidian-braindump-retro](skills/obsidian-braindump-retro/) | Review marked Obsidian daily-note braindumps, connect recurring ideas, and produce structured retros |
 | [mermaid-from-code](skills/mermaid-from-code/) | Generate verified mermaid diagrams from codebases using adversarial generator+critic agents |
 | [mermaid-to-png](skills/mermaid-to-png/) | Saves a Mermaid diagram as a PNG image |
 | [promote-permissions](skills/promote-permissions/) | Find permissions Claude requested during a session and offer to add them permanently |
