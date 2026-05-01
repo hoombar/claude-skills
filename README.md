@@ -10,6 +10,7 @@ A collection of reusable [Claude Code](https://docs.anthropic.com/en/docs/claude
 | [obsidian-braindump-retro](skills/obsidian-braindump-retro/) | Review marked Obsidian daily-note braindumps, connect recurring ideas, and produce structured retros |
 | [mermaid-from-code](skills/mermaid-from-code/) | Generate verified mermaid diagrams from codebases using adversarial generator+critic agents |
 | [mermaid-to-png](skills/mermaid-to-png/) | Saves a Mermaid diagram as a PNG image |
+| [pr-monitor](skills/pr-monitor/) | Autonomously monitor a GitHub PR — fix failing CI, process Copilot review feedback, push, repeat until green and clean |
 | [promote-permissions](skills/promote-permissions/) | Find permissions Claude requested during a session and offer to add them permanently |
 | [todoist](skills/todoist/) | Manage Todoist tasks via the CLI |
 | [youtube-podcast-generator](skills/youtube-podcast-generator/) | Generate NotebookLM audio podcasts from curated YouTube channels |
