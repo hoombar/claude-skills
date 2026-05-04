@@ -572,6 +572,340 @@ def parse_json_object(raw):
         return None
 
 
+# ---------------------------------------------------------------------------
+# Topic clustering
+# ---------------------------------------------------------------------------
+
+CLUSTER_DEFAULTS = {
+    "enabled": True,
+    "min_distinct_sources": 2,
+    "days_back": 7,
+    "fallback_days_back": 14,
+    "max_candidates": 60,
+    "max_clusters": 12,
+    "novelty_window_days": 30,
+    "fallback_if_llm_fails": True,
+    "scoring": {
+        "breadth_weight": 0.35,
+        "authority_weight": 0.20,
+        "recency_weight": 0.20,
+        "social_weight": 0.15,
+        "novelty_weight": 0.10,
+    },
+}
+
+
+def merge_cluster_config(raw_cfg):
+    cfg = dict(CLUSTER_DEFAULTS)
+    if isinstance(raw_cfg, dict):
+        cfg.update({k: v for k, v in raw_cfg.items() if k != "scoring"})
+        scoring = dict(CLUSTER_DEFAULTS["scoring"])
+        scoring.update(raw_cfg.get("scoring", {}))
+        cfg["scoring"] = scoring
+    return cfg
+
+
+def is_cluster_item(topic):
+    return topic.get("item_type") == "cluster" or isinstance(topic.get("articles"), list)
+
+
+def processed_ids(queue):
+    ids = set()
+    for item in queue.get("processed", []):
+        if item.get("id"):
+            ids.add(item.get("id"))
+        for article_id in item.get("article_ids", []) or []:
+            ids.add(article_id)
+    return ids
+
+
+def topic_similarity_key(text):
+    raw = str(text or "").lower()
+    tokens = re.findall(r"[a-z0-9][a-z0-9+-]{2,}", raw)
+    stop = {
+        "the", "and", "for", "with", "from", "into", "that", "this", "what",
+        "when", "where", "about", "using", "towards", "toward", "based",
+        "model", "models", "language", "large", "learning", "paper",
+    }
+    kept = [t for t in tokens if t not in stop]
+    return " ".join(kept[:12])
+
+
+def cluster_topic_id(title, articles):
+    article_ids = sorted(str(a.get("id", "")) for a in articles if a.get("id"))
+    basis = "|".join(article_ids[:12]) or topic_similarity_key(title)
+    return f"cluster:{hashlib.sha1(basis.encode()).hexdigest()[:14]}"
+
+
+def collect_candidate_articles(queue):
+    articles = []
+    for item in queue.get("pending", []):
+        if is_cluster_item(item):
+            articles.extend(item.get("articles", []) or [])
+        else:
+            articles.append(item)
+    return articles
+
+
+def unique_articles(articles):
+    seen = set()
+    unique = []
+    for article in articles:
+        tid = article.get("id")
+        if not tid or tid in seen:
+            continue
+        seen.add(tid)
+        unique.append(article)
+    return unique
+
+
+def distinct_source_names(articles):
+    return sorted({
+        str(a.get("source_name", "")).strip()
+        for a in articles
+        if str(a.get("source_name", "")).strip()
+    })
+
+
+def parse_published(article):
+    return parse_iso_dt(article.get("published"))
+
+
+def cluster_recency_score(articles, half_life_days):
+    dates = [parse_published(a) for a in articles]
+    dates = [d for d in dates if d]
+    if not dates:
+        return 0.5
+    newest = max(dates)
+    age = (now_utc() - newest).total_seconds() / 86400
+    return max(0.0, min(1.0, 0.5 ** (age / max(half_life_days, 1))))
+
+
+def cluster_social_score(articles):
+    best = 0.0
+    for article in articles:
+        social = article.get("social", {}) or {}
+        hn = min(float(social.get("hn_points", 0) or 0) / 800, 1.0)
+        reddit = min(float(social.get("reddit_score", 0) or 0) / 400, 1.0)
+        best = max(best, hn, reddit)
+    return best
+
+
+def cluster_authority_score(articles):
+    by_source = {}
+    for article in articles:
+        source = article.get("source_name", "")
+        authority = float(article.get("authority", 0.5) or 0.5)
+        by_source[source] = max(by_source.get(source, 0), authority)
+    if not by_source:
+        return 0.5
+    return sum(by_source.values()) / len(by_source)
+
+
+def recent_processed_cluster_keys(queue, days):
+    cutoff = now_utc() - timedelta(days=max(int(days), 1))
+    keys = []
+    for item in queue.get("processed", []):
+        delivered = parse_iso_dt(item.get("delivered"))
+        if delivered and delivered < cutoff:
+            continue
+        text = " ".join([
+            str(item.get("title", "")),
+            str(item.get("summary", "")),
+            str(item.get("topic_key", "")),
+        ])
+        key = topic_similarity_key(text)
+        if key:
+            keys.append(set(key.split()))
+    return keys
+
+
+def cluster_novelty_score(cluster, queue, novelty_window_days):
+    cluster_tokens = set(topic_similarity_key(
+        f"{cluster.get('title', '')} {cluster.get('summary', '')}"
+    ).split())
+    if not cluster_tokens:
+        return 1.0
+    for processed_tokens in recent_processed_cluster_keys(queue, novelty_window_days):
+        if not processed_tokens:
+            continue
+        overlap = len(cluster_tokens & processed_tokens) / max(len(cluster_tokens), 1)
+        if overlap >= 0.45:
+            return 0.2
+    return 1.0
+
+
+def score_cluster(cluster, queue, cluster_cfg, half_life_days):
+    articles = cluster.get("articles", []) or []
+    source_count = len(distinct_source_names(articles))
+    breadth = min(source_count / max(int(cluster_cfg.get("min_distinct_sources", 2)), 1), 1.0)
+    authority = cluster_authority_score(articles)
+    recency = cluster_recency_score(articles, half_life_days)
+    social = cluster_social_score(articles)
+    novelty = cluster_novelty_score(cluster, queue, cluster_cfg.get("novelty_window_days", 30))
+
+    weights = cluster_cfg.get("scoring", {}) or {}
+    breakdown = {
+        "breadth": round(breadth * float(weights.get("breadth_weight", 0.35)), 4),
+        "authority": round(authority * float(weights.get("authority_weight", 0.20)), 4),
+        "recency": round(recency * float(weights.get("recency_weight", 0.20)), 4),
+        "social": round(social * float(weights.get("social_weight", 0.15)), 4),
+        "novelty": round(novelty * float(weights.get("novelty_weight", 0.10)), 4),
+    }
+    total = round(sum(breakdown.values()), 4)
+    breakdown["total"] = total
+    return total, breakdown
+
+
+def summarize_article_for_clustering(article, index):
+    return {
+        "id": article.get("id"),
+        "n": index,
+        "title": article.get("title", "")[:180],
+        "source": article.get("source_name", ""),
+        "published": article.get("published", ""),
+        "summary": article.get("summary", "")[:500],
+        "url": article.get("url", ""),
+    }
+
+
+def llm_cluster_candidates(articles, gen_cfg, cluster_cfg):
+    max_clusters = int(cluster_cfg.get("max_clusters", 12))
+    payload = [
+        summarize_article_for_clustering(article, i + 1)
+        for i, article in enumerate(articles)
+    ]
+    prompt = f"""SYSTEM: You are a strict topic clustering function for an AI deep-dive reader.
+Return ONLY JSON. No markdown.
+
+Group related article candidates into semantic topic clusters. Prefer topics that multiple independent sources are converging on.
+Do not group unrelated articles just because they both mention AI or LLMs.
+
+Output exactly:
+{{
+  "clusters": [
+    {{
+      "title": "short topic title",
+      "summary": "one sentence describing the common topic",
+      "article_ids": ["candidate id", "..."],
+      "rationale": "why these articles belong together"
+    }}
+  ]
+}}
+
+Rules:
+- Return at most {max_clusters} clusters.
+- Each cluster should contain articles about the same concrete topic, technique, model release, evaluation pattern, product shift, or research theme.
+- Prefer clusters with 2+ distinct sources.
+- It is okay to omit articles that do not fit a meaningful cluster.
+- Keep titles specific enough for an EPUB article title.
+
+CANDIDATES:
+{json.dumps(payload, indent=2)}
+"""
+    _, _, raw = run_generation_model(prompt, gen_cfg, timeout=900)
+    parsed = parse_json_object(raw)
+    if not parsed or not isinstance(parsed.get("clusters"), list):
+        raise RuntimeError("clustering model did not return a clusters array")
+    return parsed["clusters"]
+
+
+def heuristic_cluster_candidates(articles, max_clusters):
+    buckets = {}
+    for article in articles:
+        key_tokens = topic_similarity_key(
+            f"{article.get('title', '')} {article.get('summary', '')}"
+        ).split()[:5]
+        if not key_tokens:
+            continue
+        for token in key_tokens:
+            buckets.setdefault(token, []).append(article)
+
+    clusters = []
+    used_keys = set()
+    for key, bucket in sorted(buckets.items(), key=lambda kv: len(kv[1]), reverse=True):
+        article_ids = {a.get("id") for a in bucket}
+        if len(article_ids) < 2 or key in used_keys:
+            continue
+        used_keys.add(key)
+        first = bucket[0]
+        clusters.append({
+            "title": first.get("title", key).strip(),
+            "summary": f"Multiple sources are discussing {key}.",
+            "article_ids": list(article_ids),
+            "rationale": "Deterministic keyword fallback cluster.",
+        })
+        if len(clusters) >= max_clusters:
+            break
+    return clusters
+
+
+def build_clusters_from_specs(cluster_specs, articles, queue, cluster_cfg, half_life_days):
+    by_id = {a.get("id"): a for a in articles}
+    clusters = []
+    min_sources = int(cluster_cfg.get("min_distinct_sources", 2))
+    for spec in cluster_specs:
+        ids = spec.get("article_ids", []) if isinstance(spec, dict) else []
+        cluster_articles = [by_id[i] for i in ids if i in by_id]
+        cluster_articles = unique_articles(cluster_articles)
+        sources = distinct_source_names(cluster_articles)
+        if len(sources) < min_sources:
+            continue
+        title = str(spec.get("title", "")).strip() or cluster_articles[0].get("title", "Untitled cluster")
+        summary = str(spec.get("summary", "")).strip()
+        published_dates = sorted(
+            [a.get("published") for a in cluster_articles if a.get("published")]
+        )
+        cluster = {
+            "item_type": "cluster",
+            "id": cluster_topic_id(title, cluster_articles),
+            "title": title,
+            "summary": summary,
+            "topic_key": topic_similarity_key(f"{title} {summary}"),
+            "rationale": str(spec.get("rationale", "")).strip(),
+            "articles": cluster_articles,
+            "article_ids": [a.get("id") for a in cluster_articles],
+            "source_names": sources,
+            "source_count": len(sources),
+            "published_range": {
+                "earliest": published_dates[0] if published_dates else None,
+                "latest": published_dates[-1] if published_dates else None,
+            },
+        }
+        score, breakdown = score_cluster(cluster, queue, cluster_cfg, half_life_days)
+        cluster["score"] = score
+        cluster["score_breakdown"] = breakdown
+        clusters.append(cluster)
+    clusters.sort(key=lambda c: c.get("score", 0), reverse=True)
+    return clusters
+
+
+def cluster_candidates(articles, queue, gen_cfg, cluster_cfg, half_life_days):
+    max_candidates = int(cluster_cfg.get("max_candidates", 60))
+    max_clusters = int(cluster_cfg.get("max_clusters", 12))
+    candidate_slice = sorted(
+        unique_articles(articles),
+        key=lambda a: a.get("score", 0),
+        reverse=True,
+    )[:max_candidates]
+    if not candidate_slice:
+        return [], "none"
+    try:
+        specs = llm_cluster_candidates(candidate_slice, gen_cfg, cluster_cfg)
+        source = "llm"
+    except Exception as e:
+        if not bool(cluster_cfg.get("fallback_if_llm_fails", True)):
+            raise
+        print(f"  [!] LLM clustering failed: {e}")
+        print("  Falling back to deterministic keyword clustering.")
+        specs = heuristic_cluster_candidates(candidate_slice, max_clusters)
+        source = "heuristic"
+    clusters = build_clusters_from_specs(specs[:max_clusters], candidate_slice, queue, cluster_cfg, half_life_days)
+    for cluster in clusters:
+        cluster["clustered_by"] = source
+    return clusters, source
+
+
 def llm_quality_gate(topic, gen_cfg, quality_cfg):
     provider = resolve_generation_provider(gen_cfg)
     model = resolve_generation_model(gen_cfg, provider)
@@ -706,6 +1040,29 @@ def fetch_content(topic, max_chars):
         print(f"    Content fetch warning: {e} — using abstract only")
 
     return content
+
+
+def fetch_cluster_content(topic, max_chars):
+    if not is_cluster_item(topic):
+        return fetch_content(topic, max_chars)
+
+    articles = topic.get("articles", []) or []
+    if not articles:
+        return topic.get("summary", "")
+
+    per_article_limit = max(2500, int(max_chars / max(len(articles), 1)))
+    sections = []
+    for index, article in enumerate(articles, 1):
+        text = fetch_content(article, per_article_limit)
+        sections.append("\n".join([
+            f"## Source {index}: {article.get('title', 'Untitled')}",
+            f"Source: {article.get('source_name', 'Unknown')}",
+            f"URL: {article.get('url', '')}",
+            f"Published: {article.get('published', '')}",
+            "",
+            text[:per_article_limit],
+        ]))
+    return "\n\n---\n\n".join(sections)[:max_chars]
 
 
 # ---------------------------------------------------------------------------
@@ -843,6 +1200,8 @@ def resolve_generation_targets(gen_cfg):
 
 
 def is_academic_topic(topic):
+    if is_cluster_item(topic):
+        return any(is_academic_topic(article) for article in topic.get("articles", []) or [])
     tid = str(topic.get("id", "")).lower()
     source = str(topic.get("source_name", "")).lower()
     url = str(topic.get("url", "")).lower()
@@ -873,6 +1232,23 @@ def generate_deep_dive(topic, content, gen_cfg):
             "- Keep depth and rigor high, but stay readable for a generalist senior software engineer.\n"
         )
 
+    if is_cluster_item(topic):
+        source_lines = "\n".join(
+            f"- {article.get('source_name', 'Unknown')}: {article.get('title', '')} — {article.get('url', '')}"
+            for article in topic.get("articles", []) or []
+        )
+        source_label = f"{topic.get('source_count', 0)} sources in a topic cluster"
+        cluster_requirements = (
+            "- Synthesize across all source articles; do not write a summary of just the first source.\n"
+            "- Explain the common topic, where sources agree, where they differ, and what the pattern suggests.\n"
+            "- Cite source URLs inline when attributing specific claims or examples.\n"
+            "- Do not invent consensus if the sources only loosely overlap; describe uncertainty clearly.\n"
+        )
+    else:
+        source_lines = f"- {topic.get('source_name', '')}: {topic.get('url', '')}"
+        source_label = f"{topic.get('source_name', '')} — {topic.get('url', '')}"
+        cluster_requirements = ""
+
     prompt = f"""SYSTEM: You are a pure text-generation function. Your stdout output is piped directly into an EPUB builder. You MUST NOT use any tools, write any files, save anything, or add any preamble or explanation. Output ONLY the Markdown article — nothing before the first '#' heading and nothing after the last line of the article.
 
 You are a senior technical writer and educator.
@@ -881,8 +1257,10 @@ Write a deep-dive article targeting {target_words} words (~{target_minutes} minu
 Do not exceed {hard_max_words} words.
 
 TOPIC: {topic['title']}
-SOURCE: {topic.get('source_name', '')} — {topic.get('url', '')}
+SOURCE SET: {source_label}
 AUTHORS: {', '.join(topic.get('authors', [])) or 'N/A'}
+SOURCES:
+{source_lines}
 
 SOURCE MATERIAL:
 ---
@@ -905,7 +1283,7 @@ REQUIREMENTS:
 - Format in clean Markdown: headings (##, ###), bold for key terms, prefer prose over bullet lists.
 - End with a "Key Takeaways" section (3–5 bullets).
 - Do NOT include a "Critic Notes" section — that is appended separately.
-{audience_requirements}{depth_requirements}
+{audience_requirements}{depth_requirements}{cluster_requirements}
 
 # {topic['title']}
 """
@@ -969,6 +1347,47 @@ def format_source_provenance(topic):
     social = topic.get("social", {}) or {}
     gate = topic.get("quality_gate", {}) or {}
 
+    if is_cluster_item(topic):
+        articles = topic.get("articles", []) or []
+        sources = topic.get("source_names") or distinct_source_names(articles)
+        lines = [
+            "## Source Provenance",
+            "",
+            "This deep dive is grounded in a topic cluster selected because multiple sources converged on the same theme.",
+            "",
+            f"- Cluster sources: **{len(sources)}** distinct source(s)",
+            f"- Selection score: **{score:.3f}**",
+        ]
+        if topic.get("summary"):
+            lines.append(f"- Cluster summary: {topic.get('summary')}")
+        if topic.get("rationale"):
+            lines.append(f"- Clustering rationale: {topic.get('rationale')}")
+        if breakdown:
+            parts = [
+                f"{name} `{value:.3f}`"
+                for name, value in breakdown.items()
+                if name != "total"
+            ]
+            lines.append(f"- Score components: {', '.join(parts)}")
+        lines += ["", "**Source articles:**", ""]
+        for article in articles:
+            pub = (article.get("published") or "")[:10]
+            suffix = f" ({pub})" if pub else ""
+            lines.append(
+                f"- **{article.get('source_name', 'Unknown')}**{suffix}: "
+                f"[{article.get('title', 'Untitled')}]({article.get('url', '')})"
+            )
+        if gate:
+            confidence = gate.get("confidence", "unknown")
+            reason = gate.get("reason", "no_reason")
+            lines += [
+                "",
+                f"- Quality gate: `{gate.get('verdict', 'unknown')}` (confidence: `{confidence}`)",
+                f"- Quality gate reason: {reason}",
+            ]
+        lines += ["", "Use this section to judge cluster quality over time and tune source breadth thresholds.", ""]
+        return lines
+
     source_name = topic.get("source_name", "Unknown source")
     source_url = topic.get("url", "")
     source_layer = topic.get("source_layer", "unknown")
@@ -1026,12 +1445,18 @@ def format_source_provenance(topic):
 
 def assemble_final(draft, critique, topic):
     today = datetime.now().strftime("%Y-%m-%d")
+    if is_cluster_item(topic):
+        source_meta = ", ".join(topic.get("source_names") or distinct_source_names(topic.get("articles", [])))
+        url_meta = ""
+    else:
+        source_meta = topic.get("source_name", "")
+        url_meta = topic.get("url", "")
     header = (
         f"---\n"
         f"title: \"{topic['title'].replace(chr(34), chr(39))}\"\n"
         f"date: {today}\n"
-        f"source: \"{topic.get('source_name', '')}\"\n"
-        f"url: \"{topic.get('url', '')}\"\n"
+        f"source: \"{source_meta}\"\n"
+        f"url: \"{url_meta}\"\n"
         f"---\n\n"
     )
     assessment = critique.get("overall_assessment", "N/A")
@@ -1592,10 +2017,16 @@ def write_companion_note(vault_root, today, delivered_items, queue):
         for item in delivered_items:
             topic = item["topic"]
             epub_path = item["epub_path"]
+            if is_cluster_item(topic):
+                source_label = ", ".join(topic.get("source_names") or [])
+                source_url = (topic.get("articles") or [{}])[0].get("url", "")
+            else:
+                source_label = topic.get("source_name", "N/A")
+                source_url = topic.get("url", "")
             lines += [
                 f"**{topic['title']}**",
                 "",
-                f"- Source: [{topic.get('source_name', 'N/A')}]({topic.get('url', '')})",
+                f"- Sources: [{source_label}]({source_url})",
                 f"- EPUB: `{epub_path.name}`",
                 "",
             ]
@@ -1605,7 +2036,9 @@ def write_companion_note(vault_root, today, delivered_items, queue):
     if pending[:5]:
         lines += ["**Up next:**", ""]
         for t in pending[:5]:
-            lines.append(f"- {t['title']} *(score: {t.get('score', 0):.2f})*")
+            source_count = t.get("source_count")
+            source_text = f", {source_count} sources" if source_count else ""
+            lines.append(f"- {t['title']} *(score: {t.get('score', 0):.2f}{source_text})*")
         lines.append("")
     lines += [
         "---",
@@ -1632,6 +2065,129 @@ def find_vault_root(hint=None):
             return p
         p = p.parent
     return SCRIPT_DIR.parent.parent
+
+
+def is_ai_relevant_article(article):
+    blob = f"{article.get('title', '')} {article.get('summary', '')}".lower()
+    return any(kw in blob for kw in AI_KEYWORDS)
+
+
+def configured_scoring(sources):
+    scoring_cfg = sources.get("scoring", {})
+    weights = {
+        "authority": scoring_cfg.get("authority_weight", 0.40),
+        "social": scoring_cfg.get("social_weight", 0.30),
+        "recency": scoring_cfg.get("recency_weight", 0.20),
+        "diversity": scoring_cfg.get("diversity_weight", 0.10),
+    }
+    return weights, scoring_cfg.get("recency_half_life_days", 3)
+
+
+def discover_articles(sources, queue, feed_meta, quality_cfg, quality_enabled, ref_now, days_back):
+    arxiv_cfg = dict(sources.get("arxiv", {}))
+    arxiv_cfg["days_back"] = days_back
+
+    candidates = []
+    candidates += fetch_arxiv(arxiv_cfg, days_back)
+    candidates += fetch_rss(sources.get("rss_feeds", []), days_back)
+
+    print("\nFetching social signals...")
+    social_cfg = sources.get("social_signals", {})
+    hn = fetch_hn_signal(social_cfg.get("hacker_news", {}), days_back)
+    reddit = fetch_reddit_signal(social_cfg.get("reddit", {}), days_back)
+    print(f"  HN: {len(hn)} AI stories  |  Reddit: {len(reddit)} posts")
+
+    weights, half_life = configured_scoring(sources)
+    blocked_ids = processed_ids(queue)
+    reject_idx = rejection_index(queue, ref_now) if quality_enabled else {}
+    prior_articles = collect_candidate_articles(queue)
+    all_articles = unique_articles([*prior_articles, *candidates])
+
+    ai_only_sources = {
+        str(feed.get("name", "")).strip()
+        for feed in sources.get("rss_feeds", []) or []
+        if bool(feed.get("ai_only", True))
+    }
+
+    kept = []
+    hard_filtered = 0
+    off_topic = 0
+    for article in all_articles:
+        enrich_topic_source_metadata(article, feed_meta)
+        tid = article.get("id")
+        if not tid or tid in blocked_ids or tid in reject_idx:
+            continue
+        if article.get("source_name") in ai_only_sources and not is_ai_relevant_article(article):
+            off_topic += 1
+            continue
+        if quality_enabled:
+            hard_reason = hard_filter_reason(article, quality_cfg)
+            if hard_reason:
+                hard_filtered += 1
+                cache_rejection(
+                    queue,
+                    article,
+                    f"hard_filter:{hard_reason}",
+                    provider="hard_filter",
+                    model="regex",
+                    days=int(quality_cfg.get("reject_cache_days", 7)),
+                    ref_time=ref_now,
+                )
+                continue
+        score, breakdown, social_debug = score_candidate(
+            article, hn, reddit, queue, weights, half_life, include_components=True
+        )
+        article["score"] = score
+        article["score_breakdown"] = breakdown
+        article.setdefault("social", {})
+        article["social"]["hn_points"] = social_debug.get("hn_points", 0)
+        article["social"]["reddit_score"] = social_debug.get("reddit_score", 0)
+        article.setdefault("discovered", datetime.now().strftime("%Y-%m-%d"))
+        kept.append(article)
+
+    kept.sort(key=lambda t: t.get("score", 0), reverse=True)
+    return {
+        "articles": kept,
+        "new_count": len(candidates),
+        "hard_filtered": hard_filtered,
+        "off_topic": off_topic,
+        "half_life": half_life,
+    }
+
+
+def discover_clusters(sources, queue, feed_meta, gen_cfg, cluster_cfg, quality_cfg, quality_enabled, ref_now):
+    days_back = int(cluster_cfg.get("days_back", sources.get("arxiv", {}).get("days_back", 7)))
+    fallback_days = int(cluster_cfg.get("fallback_days_back", days_back))
+    attempts = [days_back]
+    if fallback_days > days_back:
+        attempts.append(fallback_days)
+
+    last_result = None
+    for attempt_days in attempts:
+        print(f"  Discovery window: {attempt_days} day(s)")
+        result = discover_articles(
+            sources, queue, feed_meta, quality_cfg, quality_enabled, ref_now, attempt_days
+        )
+        last_result = result
+        print(
+            f"\nDiscovery: {result['new_count']} fetched  |  "
+            f"{len(result['articles'])} article candidate(s)"
+        )
+        if result["off_topic"]:
+            print(f"  Pruned off-topic article candidates: {result['off_topic']}")
+        if quality_enabled:
+            print(f"  Quality hard-filtered article candidates: {result['hard_filtered']}")
+
+        print("\nPhase 1b: Clustering article candidates...")
+        clusters, clustered_by = cluster_candidates(
+            result["articles"], queue, gen_cfg, cluster_cfg, result["half_life"]
+        )
+        print(f"  Built {len(clusters)} cluster(s) via {clustered_by}.")
+        if clusters or attempt_days == attempts[-1]:
+            return clusters, result, attempt_days
+        print(f"  No eligible clusters; widening discovery window to {attempts[-1]} days.")
+
+    return [], last_result or {"articles": [], "half_life": 3}, attempts[-1]
 
 
 # ---------------------------------------------------------------------------
@@ -1670,6 +2226,7 @@ def main():
     build_cfg = sources.get("build", {})
     batch_cfg = sources.get("batch", {})
     selection_cfg = sources.get("selection", {})
+    cluster_cfg = merge_cluster_config(sources.get("clustering", {}))
     quality_cfg = merge_quality_config(sources.get("quality", {}))
     quality_enabled = bool(quality_cfg.get("enabled", True))
     prefer_layers = bool(selection_cfg.get("prefer_layers", True))
@@ -1720,112 +2277,20 @@ def main():
         print(f"Forced topic: {selected_topics[0]['title']}\n")
     else:
         print("Phase 1: Discovering topics...\n")
-        arxiv_cfg = sources.get("arxiv", {})
-        days_back = arxiv_cfg.get("days_back", 3)
-
-        candidates = []
-        candidates += fetch_arxiv(arxiv_cfg, days_back)
-        candidates += fetch_rss(sources.get("rss_feeds", []), days_back)
-
-        print("\nFetching social signals...")
-        social_cfg = sources.get("social_signals", {})
-        hn = fetch_hn_signal(social_cfg.get("hacker_news", {}), days_back)
-        reddit = fetch_reddit_signal(social_cfg.get("reddit", {}), days_back)
-        print(f"  HN: {len(hn)} AI stories  |  Reddit: {len(reddit)} posts")
-
-        scoring_cfg = sources.get("scoring", {})
-        weights = {
-            "authority": scoring_cfg.get("authority_weight", 0.40),
-            "social": scoring_cfg.get("social_weight", 0.30),
-            "recency": scoring_cfg.get("recency_weight", 0.20),
-            "diversity": scoring_cfg.get("diversity_weight", 0.10),
-        }
-        half_life = scoring_cfg.get("recency_half_life_days", 3)
-
-        new_count = 0
-        hard_filtered_new = 0
-        for c in candidates:
-            enrich_topic_source_metadata(c, feed_meta)
-            if is_processed(queue, c["id"]):
-                continue
-
-            if quality_enabled:
-                hard_reason = hard_filter_reason(c, quality_cfg)
-                if hard_reason:
-                    hard_filtered_new += 1
-                    cache_rejection(
-                        queue,
-                        c,
-                        f"hard_filter:{hard_reason}",
-                        provider="hard_filter",
-                        model="regex",
-                        days=int(quality_cfg.get("reject_cache_days", 7)),
-                        ref_time=ref_now,
-                    )
-                    continue
-
-            existing = next((t for t in queue["pending"] if t["id"] == c["id"]), None)
-            if existing:
-                _, breakdown, social_debug = score_candidate(
-                    c, hn, reddit, queue, weights, half_life, include_components=True
-                )
-                existing.setdefault("social", {})
-                existing["social"]["hn_points"] = social_debug.get("hn_points", 0)
-                existing["social"]["reddit_score"] = social_debug.get("reddit_score", 0)
-                existing["score_breakdown"] = breakdown
-                continue
-            score, breakdown, social_debug = score_candidate(
-                c, hn, reddit, queue, weights, half_life, include_components=True
-            )
-            c["score"] = score
-            c["score_breakdown"] = breakdown
-            c.setdefault("social", {})
-            c["social"]["hn_points"] = social_debug.get("hn_points", 0)
-            c["social"]["reddit_score"] = social_debug.get("reddit_score", 0)
-            c["discovered"] = today
-            queue["pending"].append(c)
-            new_count += 1
-
-        pruned_offtopic = prune_offtopic_pending(queue, sources.get("rss_feeds", []))
-        hard_pruned_pending = 0
-        if quality_enabled:
-            kept_pending = []
-            for t in queue["pending"]:
-                hard_reason = hard_filter_reason(t, quality_cfg)
-                if hard_reason:
-                    hard_pruned_pending += 1
-                    cache_rejection(
-                        queue,
-                        t,
-                        f"hard_filter:{hard_reason}",
-                        provider="hard_filter",
-                        model="regex",
-                        days=int(quality_cfg.get("reject_cache_days", 7)),
-                        ref_time=ref_now,
-                    )
-                    continue
-                kept_pending.append(t)
-            queue["pending"] = kept_pending
-
-        for t in queue["pending"]:
-            score, breakdown, social_debug = score_candidate(
-                t, hn, reddit, queue, weights, half_life, include_components=True
-            )
-            t["score"] = score
-            t["score_breakdown"] = breakdown
-            t.setdefault("social", {})
-            t["social"]["hn_points"] = social_debug.get("hn_points", 0)
-            t["social"]["reddit_score"] = social_debug.get("reddit_score", 0)
-        queue["pending"].sort(key=lambda t: t["score"], reverse=True)
-
-        print(f"\nDiscovery: {new_count} new  |  {len(queue['pending'])} pending total")
-        if pruned_offtopic:
-            print(f"  Pruned off-topic pending items: {pruned_offtopic}")
-        if quality_enabled:
-            print(f"  Quality hard-filtered: {hard_filtered_new} new  |  {hard_pruned_pending} existing")
+        clusters, discovery_result, used_days_back = discover_clusters(
+            sources,
+            queue,
+            feed_meta,
+            gen_cfg,
+            cluster_cfg,
+            quality_cfg,
+            quality_enabled,
+            ref_now,
+        )
+        queue["pending"] = clusters
 
         if not queue["pending"]:
-            print("No candidate topics found. Try widening days_back in sources.yaml.")
+            print("No multi-source topic clusters found. Try widening clustering.days_back or adding sources.")
             sys.exit(0)
 
         if requested_count > max_batch_per_run:
@@ -1836,54 +2301,32 @@ def main():
             reject_idx = rejection_index(queue, ref_now)
             eligible_pending = [t for t in queue["pending"] if t.get("id") not in reject_idx]
             top_k = max(1, int(quality_cfg.get("top_k", 5)))
-            preferred_pending, fallback_pending = partition_candidates_by_layer(
-                eligible_pending, preferred_layers, fallback_layers
-            )
             selected_topics = []
             llm_rejected = 0
             llm_checked = 0
 
             if not args.dry_run:
-                if prefer_layers:
-                    phase_windows = []
-                    preferred_window = preferred_pending[:top_k]
-                    fallback_window = fallback_pending[:top_k]
-                    if preferred_window:
-                        phase_windows.append(("preferred", preferred_window))
-                    if allow_fallback_layers and fallback_window:
-                        phase_windows.append(("fallback", fallback_window))
-                    if not phase_windows:
-                        phase_windows = [("all", eligible_pending[:top_k])]
-                else:
-                    phase_windows = [("all", eligible_pending[:top_k])]
-
-                for phase_name, window in phase_windows:
-                    if not window:
-                        continue
-                    print(
-                        f"  Quality LLM gate ({phase_name}): checking top {len(window)} eligible topic(s)..."
-                    )
-                    for topic in window:
-                        accepted, gate_result = llm_quality_gate(topic, gen_cfg, quality_cfg)
-                        llm_checked += 1
-                        if accepted:
-                            topic["quality_gate"] = gate_result
-                            selected_topics.append(topic)
-                            if len(selected_topics) >= effective_count:
-                                break
-                        else:
-                            llm_rejected += 1
-                            cache_rejection(
-                                queue,
-                                topic,
-                                f"llm_gate:{gate_result.get('reason', 'no_reason')}",
-                                provider=gate_result.get("provider", "unknown"),
-                                model=gate_result.get("model", "unknown"),
-                                days=int(quality_cfg.get("reject_cache_days", 7)),
-                                ref_time=ref_now,
-                            )
-                    if len(selected_topics) >= effective_count:
-                        break
+                window = eligible_pending[:top_k]
+                print(f"  Quality LLM gate: checking top {len(window)} eligible cluster(s)...")
+                for topic in window:
+                    accepted, gate_result = llm_quality_gate(topic, gen_cfg, quality_cfg)
+                    llm_checked += 1
+                    if accepted:
+                        topic["quality_gate"] = gate_result
+                        selected_topics.append(topic)
+                        if len(selected_topics) >= effective_count:
+                            break
+                    else:
+                        llm_rejected += 1
+                        cache_rejection(
+                            queue,
+                            topic,
+                            f"llm_gate:{gate_result.get('reason', 'no_reason')}",
+                            provider=gate_result.get("provider", "unknown"),
+                            model=gate_result.get("model", "unknown"),
+                            days=int(quality_cfg.get("reject_cache_days", 7)),
+                            ref_time=ref_now,
+                        )
                 if len(selected_topics) < effective_count:
                     print(
                         f"  [!] Quality gate approved {len(selected_topics)} topic(s) "
@@ -1894,47 +2337,36 @@ def main():
                     f"accepted {len(selected_topics)}, rejected {llm_rejected}"
                 )
             else:
-                if prefer_layers:
-                    selected_topics = list(preferred_pending[:effective_count])
-                    if len(selected_topics) < effective_count and allow_fallback_layers:
-                        needed = effective_count - len(selected_topics)
-                        selected_topics.extend(fallback_pending[:needed])
-                    print(
-                        f"  [DRY RUN] Layer preference: preferred={len(preferred_pending)} "
-                        f"| fallback={len(fallback_pending)} | selected={len(selected_topics)}"
-                    )
-                else:
-                    selected_topics = eligible_pending[:effective_count]
+                selected_topics = eligible_pending[:effective_count]
                 print(
                     f"  [DRY RUN] Quality LLM gate skipped; showing top {len(selected_topics)} "
-                    "eligible topics before LLM checks."
+                    f"eligible clusters before LLM checks. Discovery window: {used_days_back} days."
                 )
         else:
-            if prefer_layers:
-                preferred_pending, fallback_pending = partition_candidates_by_layer(
-                    queue["pending"], preferred_layers, fallback_layers
-                )
-                selected_topics = list(preferred_pending[:effective_count])
-                if len(selected_topics) < effective_count and allow_fallback_layers:
-                    needed = effective_count - len(selected_topics)
-                    selected_topics.extend(fallback_pending[:needed])
-            else:
-                selected_topics = list(queue["pending"][:effective_count])
+            selected_topics = list(queue["pending"][:effective_count])
 
     if args.dry_run:
         if args.topic_id:
             print("\n[DRY RUN] Forced topic:\n")
             t = selected_topics[0]
-            pub = (t.get("published") or "")[:10]
+            pub = (t.get("published") or t.get("published_range", {}).get("latest") or "")[:10]
             print(f"   1. [{t.get('score', 0):.3f}] {t['title'][:70]}")
-            print(f"      {t.get('source_name', '')}  |  {pub}")
+            if is_cluster_item(t):
+                print(f"      {t.get('source_count', 0)} sources: {', '.join(t.get('source_names', []))}  |  {pub}")
+            else:
+                print(f"      {t.get('source_name', '')}  |  {pub}")
         else:
             preview_n = max(10, requested_count)
-            print(f"\n[DRY RUN] Top {preview_n} candidates:\n")
+            print(f"\n[DRY RUN] Top {preview_n} topic clusters:\n")
             for i, t in enumerate(queue["pending"][:preview_n], 1):
-                pub = (t.get("published") or "")[:10]
+                pub = (t.get("published_range", {}).get("latest") or t.get("published") or "")[:10]
                 print(f"  {i:2}. [{t['score']:.3f}] {t['title'][:70]}")
-                print(f"        {t.get('source_name', '')}  |  {pub}")
+                if is_cluster_item(t):
+                    print(f"        {t.get('source_count', 0)} sources: {', '.join(t.get('source_names', []))}  |  latest {pub}")
+                    for article in (t.get("articles", []) or [])[:5]:
+                        print(f"          - {article.get('source_name', 'Unknown')}: {article.get('title', '')[:74]}")
+                else:
+                    print(f"        {t.get('source_name', '')}  |  {pub}")
             print(f"\nWould generate {len(selected_topics)} topic(s) in non-dry mode.")
         save_queue(queue)
         print("\nQueue saved. Exiting (--dry-run).\n")
@@ -1953,13 +2385,20 @@ def main():
     for index, selected in enumerate(selected_topics, 1):
         print(f"\n{'─'*60}")
         print(f"  Topic {index}/{total_topics}: {selected['title'][:70]}")
-        print(f"  Source: {selected.get('source_name', '')}  |  Score: {selected.get('score', 0):.3f}")
-        print(f"  URL   : {selected.get('url', '')}")
+        if is_cluster_item(selected):
+            print(
+                f"  Sources: {selected.get('source_count', 0)} "
+                f"({', '.join(selected.get('source_names', []))})  |  "
+                f"Score: {selected.get('score', 0):.3f}"
+            )
+        else:
+            print(f"  Source: {selected.get('source_name', '')}  |  Score: {selected.get('score', 0):.3f}")
+            print(f"  URL   : {selected.get('url', '')}")
         print(f"{'─'*60}\n")
 
         try:
             print("Phase 2: Fetching source content...")
-            content = fetch_content(selected, max_chars=gen_cfg.get("max_source_chars", 40000))
+            content = fetch_cluster_content(selected, max_chars=gen_cfg.get("max_source_chars", 40000))
             print(f"  {len(content):,} chars retrieved")
 
             print("\nPhase 3: Generating deep dive...")
@@ -2005,15 +2444,28 @@ def main():
 
             if delivered:
                 queue["pending"] = [t for t in queue["pending"] if t["id"] != selected["id"]]
-                queue.setdefault("processed", []).append({
+                processed_entry = {
                     "id": selected["id"],
                     "title": selected["title"],
-                    "source_name": selected.get("source_name"),
-                    "source_layer": selected.get("source_layer"),
-                    "source_role": selected.get("source_role"),
                     "delivered": today,
                     "epub": publication_path.name,
-                })
+                }
+                if is_cluster_item(selected):
+                    processed_entry.update({
+                        "item_type": "cluster",
+                        "summary": selected.get("summary", ""),
+                        "topic_key": selected.get("topic_key", ""),
+                        "source_names": selected.get("source_names", []),
+                        "source_count": selected.get("source_count", 0),
+                        "article_ids": selected.get("article_ids", []),
+                    })
+                else:
+                    processed_entry.update({
+                        "source_name": selected.get("source_name"),
+                        "source_layer": selected.get("source_layer"),
+                        "source_role": selected.get("source_role"),
+                    })
+                queue.setdefault("processed", []).append(processed_entry)
                 delivered_items.append({"topic": selected, "epub_path": publication_path})
             else:
                 print("  Delivery not confirmed; topic remains in pending queue for retry.")
