@@ -11,7 +11,7 @@ arxiv:
     - cs.CL    # Computation and Language (NLP)
     - cs.LG    # Machine Learning
   max_results_per_category: 15
-  days_back: 3
+  days_back: 7
 
 # ---------------------------------------------------------------------------
 # RSS feeds — lab blogs and curated newsletters
@@ -67,7 +67,7 @@ social_signals:
   hacker_news:
     enabled: true
     min_points: 100   # ignore low-engagement stories
-    days_back: 3
+    days_back: 7
 
   reddit:
     enabled: true
@@ -75,7 +75,30 @@ social_signals:
       - MachineLearning
       - LocalLLaMA
     min_score: 50
-    days_back: 3
+    days_back: 7
+
+# ---------------------------------------------------------------------------
+# Topic clustering — select shared topics, not one-off source articles
+# enabled: true -> cluster article candidates and generate from the best cluster
+# min_distinct_sources: require independent coverage before generating
+# fallback_days_back: widen once if the normal window finds no eligible clusters
+# social signals boost scoring but are not used as source material
+# ---------------------------------------------------------------------------
+clustering:
+  enabled: true
+  days_back: 7
+  fallback_days_back: 14
+  min_distinct_sources: 2
+  max_candidates: 60
+  max_clusters: 12
+  novelty_window_days: 30
+  fallback_if_llm_fails: true
+  scoring:
+    breadth_weight: 0.35
+    authority_weight: 0.20
+    recency_weight: 0.20
+    social_weight: 0.15
+    novelty_weight: 0.10
 
 # ---------------------------------------------------------------------------
 # Scoring weights — must sum to 1.0
