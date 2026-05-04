@@ -1,6 +1,6 @@
 # Kobo EPUB Pipeline
 
-Generate one long-form AI deep-dive EPUB per run and deliver it with a pull-friendly sync path for Kobo.
+Generate one long-form AI deep-dive EPUB from a multi-source topic cluster and deliver it with a pull-friendly sync path for Kobo.
 
 ## How It Works
 
@@ -9,29 +9,34 @@ Mermaid source file: [`pipeline.mmd`](pipeline.mmd)
 ```mermaid
 flowchart TD
   A[Run: cron or manual] --> B[Load sources.yaml and queue.json]
-  B --> C[Discover candidates<br/>arXiv + RSS]
-  C --> D[Fetch social signals<br/>HN + Reddit]
-  D --> E[Score and update pending queue]
-  E --> F{--dry-run?}
-  F -->|yes| G[Save queue and exit]
-  F -->|no| H[Select topic<br/>top score or --topic-id]
-  H --> I[Fetch full content<br/>PDF, HTML, or summary fallback]
-  I --> J[Generate draft<br/>claude --print]
-  J --> K[Run critic pass<br/>JSON concerns]
-  K --> L[Assemble final Markdown<br/>+ Critic Notes]
-  L --> M[Render Mermaid blocks to PNG]
-  M --> N[Build EPUB with pandoc]
-  N --> O{delivery.mode}
-  O -->|gws_drive| P[Upload EPUB to Google Drive]
-  O -->|pull| Q[Copy EPUB to local inbox]
-  O -->|none| R[Skip delivery]
-  P --> S{Delivery confirmed?}
-  Q --> S
-  R --> S
-  S -->|yes| T[Move topic pending -> processed]
-  S -->|no| U[Keep topic in pending for retry]
-  T --> V[Save queue.json]
-  U --> V
+  B --> C[Discover article candidates<br/>arXiv + RSS]
+  C --> D[Fetch social signals<br/>HN + Reddit boosts]
+  D --> E[Score article candidates]
+  E --> F[Cluster candidates into topics<br/>LLM with heuristic fallback]
+  F --> G{Enough multi-source clusters?}
+  G -->|no| H[Widen discovery window once]
+  H --> C
+  G -->|yes| I[Score and save cluster queue]
+  I --> J{--dry-run?}
+  J -->|yes| K[Print ranked clusters<br/>save queue and exit]
+  J -->|no| L[Select cluster<br/>top score or --topic-id]
+  L --> M[Fetch full content for each source<br/>PDF, HTML, or summary fallback]
+  M --> N[Generate synthesized draft<br/>Claude or Codex]
+  N --> O[Run critic pass<br/>against combined source material]
+  O --> P[Assemble final Markdown<br/>+ source provenance + Critic Notes]
+  P --> Q[Render diagram blocks to PNG]
+  Q --> R[Build EPUB with pandoc]
+  R --> S{delivery.mode}
+  S -->|gws_drive| T[Upload EPUB to Google Drive]
+  S -->|pull| U[Copy EPUB to local inbox]
+  S -->|none| V[Skip delivery]
+  T --> W{Delivery confirmed?}
+  U --> W
+  V --> W
+  W -->|yes| X[Move cluster pending -> processed]
+  W -->|no| Y[Keep cluster in pending for retry]
+  X --> Z[Save queue.json]
+  Y --> Z
 ```
 
 ## Prerequisites
@@ -66,7 +71,7 @@ Edit `kobo_reader_state/sources.yaml`:
 Run the pipeline:
 
 ```bash
-# Crawl, score, and queue only
+# Crawl, cluster, score, and queue only
 python3 kobo_daily_reader.py --dry-run
 
 # Build one EPUB and deliver according to delivery.mode
@@ -79,14 +84,14 @@ Useful flags:
 # Build only, skip delivery
 python3 kobo_daily_reader.py --no-sync --output-dir ~/Desktop
 
-# Force a specific queued topic
-python3 kobo_daily_reader.py --topic-id arxiv:2401.12345v1
+# Force a specific queued cluster
+python3 kobo_daily_reader.py --topic-id cluster:abc123def45678
 ```
 
 ## Delivery Semantics
 
-- A topic is moved from `pending` to `processed` only after delivery succeeds.
-- If delivery fails, the topic stays in `pending` and is retried on the next run.
+- A topic cluster is moved from `pending` to `processed` only after delivery succeeds.
+- If delivery fails, the cluster stays in `pending` and is retried on the next run.
 - This makes the pipeline queue-safe for intermittent network or service failures.
 
 See [`SKILL.md`](SKILL.md) for full setup and troubleshooting details.

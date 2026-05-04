@@ -1,12 +1,12 @@
 ---
 name: kobo-epub-pipeline
-description: Generate daily long-form AI deep-dive EPUBs for Kobo and deliver them through Google Drive pull sync. Use when the user wants to set up, run, debug, or automate a Kobo EPUB pipeline with topic discovery, queueing, Claude generation, critic pass, EPUB build, and Drive upload.
+description: Generate long-form AI deep-dive EPUBs for Kobo from multi-source topic clusters and deliver them through Google Drive pull sync. Use when the user wants to set up, run, debug, or automate a Kobo EPUB pipeline with source discovery, semantic topic clustering, queueing, Claude/Codex generation, critic pass, EPUB build, and Drive upload.
 allowed-tools: Bash(python3 *), Bash(pip3 *), Bash(claude *), Bash(gws *), Bash(mmdc *), Bash(pandoc *)
 ---
 
 # Kobo EPUB Pipeline
 
-Build and run a daily Kobo deep-dive EPUB pipeline backed by a persistent topic queue and Google Drive pull delivery.
+Build and run a Kobo deep-dive EPUB pipeline backed by semantic topic clustering, a persistent cluster queue, and Google Drive pull delivery.
 
 ## What This Skill Includes
 
@@ -50,7 +50,7 @@ cp <skill-dir>/kobo_reader_state/sources.example.yaml <skill-dir>/kobo_reader_st
 ## Running
 
 ```bash
-# Crawl and score only
+# Crawl, cluster, and score only
 python3 <skill-dir>/kobo_daily_reader.py --dry-run
 
 # Build one EPUB and upload to Drive
@@ -59,20 +59,20 @@ python3 <skill-dir>/kobo_daily_reader.py
 # Build only, skip delivery
 python3 <skill-dir>/kobo_daily_reader.py --no-sync --output-dir ~/Desktop
 
-# Force one queued topic ID
-python3 <skill-dir>/kobo_daily_reader.py --topic-id arxiv:2401.12345v1
+# Force one queued cluster ID
+python3 <skill-dir>/kobo_daily_reader.py --topic-id cluster:abc123def45678
 ```
 
 ## Delivery Behavior
 
 - Delivery is pull-based: script uploads EPUBs to Drive, Kobo fetches them on `Sync now`.
-- The script only moves a topic to `processed` after successful delivery.
-- Failed delivery keeps the topic in `pending` for retry on the next run.
+- The script only moves a topic cluster to `processed` after successful delivery.
+- Failed delivery keeps the cluster in `pending` for retry on the next run.
 
 ## Cron
 
 ```cron
-0 5 * * * /usr/bin/python3 /path/to/kobo_daily_reader.py >> ~/logs/kobo_daily_reader.log 2>&1
+0 5 * * 0,4 /usr/bin/python3 /path/to/kobo_daily_reader.py >> ~/logs/kobo_daily_reader.log 2>&1
 ```
 
 ## Troubleshooting
