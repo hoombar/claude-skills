@@ -90,6 +90,7 @@ clustering:
   fallback_days_back: 14
   min_distinct_sources: 2
   max_candidates: 60
+  max_candidates_per_source: 8
   max_clusters: 12
   novelty_window_days: 30
   fallback_if_llm_fails: true

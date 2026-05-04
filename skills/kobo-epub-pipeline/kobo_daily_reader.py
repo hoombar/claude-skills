@@ -582,6 +582,7 @@ CLUSTER_DEFAULTS = {
     "days_back": 7,
     "fallback_days_back": 14,
     "max_candidates": 60,
+    "max_candidates_per_source": 8,
     "max_clusters": 12,
     "novelty_window_days": 30,
     "fallback_if_llm_fails": True,
@@ -659,11 +660,18 @@ def unique_articles(articles):
     return unique
 
 
+def canonical_source_name(source_name):
+    source = str(source_name or "").strip()
+    if source.lower().startswith("arxiv"):
+        return "arXiv"
+    return source
+
+
 def distinct_source_names(articles):
     return sorted({
-        str(a.get("source_name", "")).strip()
+        canonical_source_name(a.get("source_name", ""))
         for a in articles
-        if str(a.get("source_name", "")).strip()
+        if canonical_source_name(a.get("source_name", ""))
     })
 
 
@@ -694,7 +702,7 @@ def cluster_social_score(articles):
 def cluster_authority_score(articles):
     by_source = {}
     for article in articles:
-        source = article.get("source_name", "")
+        source = canonical_source_name(article.get("source_name", ""))
         authority = float(article.get("authority", 0.5) or 0.5)
         by_source[source] = max(by_source.get(source, 0), authority)
     if not by_source:
@@ -883,11 +891,22 @@ def build_clusters_from_specs(cluster_specs, articles, queue, cluster_cfg, half_
 def cluster_candidates(articles, queue, gen_cfg, cluster_cfg, half_life_days):
     max_candidates = int(cluster_cfg.get("max_candidates", 60))
     max_clusters = int(cluster_cfg.get("max_clusters", 12))
-    candidate_slice = sorted(
+    max_per_source = max(1, int(cluster_cfg.get("max_candidates_per_source", 8)))
+    sorted_articles = sorted(
         unique_articles(articles),
         key=lambda a: a.get("score", 0),
         reverse=True,
-    )[:max_candidates]
+    )
+    candidate_slice = []
+    per_source_counts = {}
+    for article in sorted_articles:
+        source = canonical_source_name(article.get("source_name", ""))
+        if per_source_counts.get(source, 0) >= max_per_source:
+            continue
+        candidate_slice.append(article)
+        per_source_counts[source] = per_source_counts.get(source, 0) + 1
+        if len(candidate_slice) >= max_candidates:
+            break
     if not candidate_slice:
         return [], "none"
     try:
