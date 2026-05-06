@@ -22,18 +22,24 @@ Each invocation does **one cycle** then either declares the PR done, halts and a
 
 ## Setup (first run only)
 
-The user's `~/.claude/settings.json` may have `"Bash(git push *)"` in the `deny` list. A `deny` rule is a hard block that per-call approval cannot override. If you find pushing is denied, **stop and tell the user** to narrow the deny rule to:
+Two settings prerequisites. If either fails, **stop and tell the user how to fix it** — don't edit settings yourself:
 
-```json
-"deny": [
-  "Bash(git push *--force*)",
-  "Bash(git push *-f *)",
-  "Bash(git push * origin main*)",
-  "Bash(git push * origin master*)"
-]
-```
+1. **`gh` must be allowed.** This skill leans heavily on `gh` for reading checks/threads, posting replies, resolving threads, rerunning failed jobs, and posting summary comments. Add to `permissions.allow` in `~/.claude/settings.json`:
+   ```json
+   "Bash(gh *)"
+   ```
+   Without this rule, calls like `gh api`, `gh pr comment`, `gh run rerun`, and `gh pr checks` will be silently denied (especially under `defaultMode: auto` with `skipAutoPermissionPrompt: true`).
 
-Don't edit settings.json yourself. Wait for the user to make the change and re-invoke.
+2. **`git push` must not be globally denied.** If `~/.claude/settings.json` has `"Bash(git push *)"` in the `deny` list, narrow it — a `deny` rule is a hard block that per-call approval cannot override:
+   ```json
+   "deny": [
+     "Bash(git push *--force*)",
+     "Bash(git push *-f *)",
+     "Bash(git push * origin main*)",
+     "Bash(git push * origin master*)"
+   ]
+   ```
+   This still blocks force-pushes and pushes to default branches but allows feature-branch pushes (always reversible).
 
 ## Cycle procedure
 
@@ -88,11 +94,20 @@ When halting: post a `[Claude]` PR-level comment summarising what was tried (whi
 # All checks
 gh pr checks <PR_NUMBER> --json name,state,bucket,link
 
-# Unresolved Copilot threads
+# Unresolved threads + outstanding review requests (single GraphQL call)
 gh api graphql -f query='
 query($owner:String!,$repo:String!,$number:Int!){
   repository(owner:$owner, name:$repo){
     pullRequest(number:$number){
+      reviewRequests(first:20){
+        nodes{
+          requestedReviewer{
+            __typename
+            ... on User { login }
+            ... on Bot  { login }
+          }
+        }
+      }
       reviewThreads(first:100){
         nodes{
           id isResolved
@@ -110,18 +125,24 @@ query($owner:String!,$repo:String!,$number:Int!){
 }' -F owner=<OWNER> -F repo=<REPO> -F number=<PR_NUMBER>
 ```
 
-Categorise checks by `bucket`: `pass` / `fail` / `pending` / `skipping` / `cancel`.
+Derive three things from the result:
 
-Filter threads: keep only those where `isResolved == false` **and** the first comment's `author.login ∈ {Copilot, copilot-pull-request-reviewer}`. Drop everything else.
+- `checks_status` — bucketise `gh pr checks` output into `pass` / `fail` / `pending` / `skipping` / `cancel`.
+- `copilot_reviewing` — `true` if any node in `reviewRequests` has `requestedReviewer.login ∈ {Copilot, copilot-pull-request-reviewer}`. Means Copilot was requested and has not yet submitted a review for the current HEAD.
+- `unresolved_copilot_threads` — `reviewThreads` filtered to `isResolved == false` **and** the first comment's `author.login ∈ {Copilot, copilot-pull-request-reviewer}`. Drop everything else. **Only meaningful when `copilot_reviewing` is `false`** — partial threads from an in-flight review must not be acted on.
 
 ### 7. Decide action
 
-| State | Action |
-|---|---|
-| All checks pass + zero Copilot threads | **DONE** — post a brief `[Claude]` summary comment, delete the state file, exit. |
-| Some pending, no failures, no threads | `ScheduleWakeup` (see cadence) and exit. |
-| Failures present | Pick **one** failure (highest-priority kind: build > test > lint/style > flaky). Fix it this cycle. |
-| Only unresolved Copilot threads | Pick **one** thread. Process this cycle. |
+Decision uses the three derived values. Failures are always actionable; Copilot threads are only actionable once Copilot has finished reviewing.
+
+| `copilot_reviewing` | Failures? | Threads? | Action |
+|---|---|---|---|
+| `false` | none | none + checks all `pass` | **DONE** — post a brief `[Claude]` summary comment, delete the state file, exit. |
+| `false` | none | none + some `pending` | `ScheduleWakeup` (see cadence) and exit. |
+| `false` | yes | — | Pick **one** failure (priority: build > test > lint/style > flaky). Fix it this cycle. |
+| `false` | none | yes | Pick **one** unresolved thread. Process this cycle. |
+| `true`  | yes | — | Fix the failure as normal (it doesn't depend on Copilot). |
+| `true`  | none | — | **Wait** — `ScheduleWakeup` 180s and exit. Do **not** declare done. Do **not** touch any thread (the review is incomplete). |
 
 One issue per cycle keeps commits small and the diff easy to review.
 

@@ -17,11 +17,14 @@ flowchart TD
     LoadState --> HeadChange{HEAD oid changed<br/>since last cycle?}
     HeadChange -- yes --> Reset[Reset attempt counters]
     HeadChange -- no --> Fetch
-    Reset --> Fetch[Fetch in parallel:<br/>gh pr checks +<br/>GraphQL reviewThreads]
+    Reset --> Fetch[Fetch in parallel:<br/>gh pr checks +<br/>GraphQL reviewRequests<br/>+ reviewThreads]
     Fetch --> FilterCopilot[Filter threads:<br/>Copilot author only<br/>human comments ignored]
     FilterCopilot --> Limits{Stop limits hit?<br/>attempts >= 2 OR cycle >= 50}
     Limits -- yes --> Halt[Post summary comment<br/>AskUserQuestion, exit]
-    Limits -- no --> Decide{What's the state?}
+    Limits -- no --> CopilotReviewing{Copilot still<br/>reviewing?<br/>in reviewRequests}
+    CopilotReviewing -- yes, no failures --> WaitCopilot([Wait 180s<br/>schedule wakeup])
+    CopilotReviewing -- yes, has failures --> FixFailure
+    CopilotReviewing -- no --> Decide{What's the state?}
 
     Decide -- all green +<br/>no unresolved threads --> Done([DONE<br/>delete state, exit])
     Decide -- only pending --> Schedule
@@ -62,7 +65,7 @@ flowchart TD
     classDef sleep fill:#1f3d5d,stroke:#2e5a8b,color:#fff
     class Done done
     class Refuse,Halt halt
-    class Wake sleep
+    class Wake,WaitCopilot sleep
 ```
 
 Green = terminal success. Red = halt-and-ask. Blue = sleeping until the next scheduled tick.
@@ -78,6 +81,11 @@ Then in Claude Code, invoke as `/pr-monitor <pr-url-or-number>`.
 ## Prerequisites
 
 - **`gh` CLI** authenticated against the repo (`gh auth status` should show write access).
+- **`Bash(gh *)` allowed in Claude Code.** This skill calls `gh api`, `gh pr comment`, `gh run rerun`, `gh pr checks`, etc. Add to `permissions.allow` in `~/.claude/settings.json`:
+  ```json
+  "Bash(gh *)"
+  ```
+  Without this, calls are silently denied under `defaultMode: auto` with `skipAutoPermissionPrompt: true`, and the skill cannot post replies, resolve threads, or rerun flaky checks.
 - **`git push` not blocked.** A common Claude Code setting is `"Bash(git push *)"` in the `deny` list, which is a hard block that per-call approval cannot override. Narrow it before running this skill, e.g.:
   ```json
   "deny": [
