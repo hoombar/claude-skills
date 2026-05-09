@@ -18,6 +18,7 @@ Claude Code must be installed and authenticated on this machine:
 
 import argparse
 import hashlib
+import html
 import json
 import os
 import re
@@ -1688,7 +1689,87 @@ def convert_epub_to_kepub(epub_path, kepub_path, work_dir):
     return True
 
 
-def build_publication(markdown_text, output_stem, work_dir, title, build_cfg):
+def readable_filename_part(value, max_chars=50, fallback="Untitled"):
+    cleaned = re.sub(r"[^\w\s-]", "", value or "")
+    cleaned = re.sub(r"[_\s-]+", " ", cleaned).strip()
+    if not cleaned:
+        return fallback
+    if len(cleaned) <= max_chars:
+        return cleaned
+
+    truncated = cleaned[:max_chars].rstrip()
+    if " " in truncated:
+        truncated = truncated.rsplit(" ", 1)[0].strip()
+    return truncated or cleaned[:max_chars].strip() or fallback
+
+
+def readable_topic_suffix(topic_id, max_chars=12):
+    suffix = re.sub(r"[^\w-]", " ", topic_id or "")
+    suffix = re.sub(r"[_\s-]+", " ", suffix).strip()
+    return suffix[:max_chars].strip()
+
+
+def make_output_stem(output_dir, file_date, title, topic_id):
+    title_part = readable_filename_part(title)
+    suffix = readable_topic_suffix(topic_id)
+    if suffix:
+        return output_dir / f"{file_date} - {title_part} - {suffix}"
+    return output_dir / f"{file_date} - {title_part}"
+
+
+def write_epub_cover(work_dir, title, publisher, publication_date="", source_label=""):
+    cover_file = work_dir / "cover.svg"
+    title_lines = []
+    words = (title or "Daily AI Deep Dive").split()
+    current = []
+    for word in words:
+        candidate = " ".join([*current, word])
+        if len(candidate) > 26 and current:
+            title_lines.append(" ".join(current))
+            current = [word]
+        else:
+            current.append(word)
+    if current:
+        title_lines.append(" ".join(current))
+    title_lines = title_lines[:5]
+
+    title_svg = []
+    start_y = 275 - (len(title_lines) * 28)
+    for idx, line in enumerate(title_lines):
+        title_svg.append(
+            f'<text x="80" y="{start_y + idx * 58}" class="title">'
+            f"{html.escape(line)}</text>"
+        )
+
+    meta_parts = [part for part in [publication_date, source_label] if part]
+    meta = " / ".join(meta_parts)
+    cover_file.write_text(
+        "\n".join([
+            '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1600" viewBox="0 0 1200 1600">',
+            "<style>",
+            ".bg { fill: #f7f3e8; }",
+            ".rule { fill: #1f2933; }",
+            ".kicker { fill: #5f6f52; font: 700 42px sans-serif; letter-spacing: 3px; }",
+            ".title { fill: #111827; font: 700 72px sans-serif; }",
+            ".meta { fill: #384252; font: 400 38px sans-serif; }",
+            ".publisher { fill: #111827; font: 600 42px sans-serif; }",
+            "</style>",
+            '<rect width="1200" height="1600" class="bg"/>',
+            '<rect x="80" y="110" width="1040" height="14" class="rule"/>',
+            '<text x="80" y="205" class="kicker">DAILY AI DEEP DIVE</text>',
+            *title_svg,
+            f'<text x="80" y="1230" class="meta">{html.escape(meta)}</text>',
+            '<rect x="80" y="1300" width="1040" height="6" class="rule"/>',
+            f'<text x="80" y="1400" class="publisher">{html.escape(publisher)}</text>',
+            "</svg>",
+        ]),
+        encoding="utf-8",
+    )
+    return cover_file
+
+
+def build_publication(markdown_text, output_stem, work_dir, title, build_cfg, publication_date="", source_label=""):
+    work_dir.mkdir(parents=True, exist_ok=True)
     markdown_text = render_graphviz(markdown_text, work_dir)
     markdown_text = render_mermaid(markdown_text, work_dir)
     md_file = work_dir / "content.md"
@@ -1719,18 +1800,43 @@ def build_publication(markdown_text, output_stem, work_dir, title, build_cfg):
         ]),
         encoding="utf-8",
     )
+    publisher = str(build_cfg.get("publisher") or "Ben Pearson").strip() or "Ben Pearson"
+    pandoc_args = [
+        "pandoc", str(md_file),
+        "-o", str(epub_path),
+        "--metadata", f"title={title}",
+        "--metadata", f"publisher={publisher}",
+        "--metadata", f"author={publisher}",
+        "--resource-path", str(work_dir),
+        "--css", str(css_file),
+        "--standalone",
+    ]
+    cover_enabled = build_cfg.get("cover_enabled", True)
+    if cover_enabled:
+        try:
+            cover_file = write_epub_cover(
+                work_dir=work_dir,
+                title=title,
+                publisher=publisher,
+                publication_date=publication_date,
+                source_label=source_label,
+            )
+            pandoc_args.extend(["--epub-cover-image", str(cover_file)])
+        except OSError as e:
+            cover_enabled = False
+            print(f"    [!] cover generation failed; building without cover. {e}")
     try:
-        subprocess.run(
-            [
-                "pandoc", str(md_file),
-                "-o", str(epub_path),
-                "--metadata", f"title={title}",
-                "--resource-path", str(work_dir),
-                "--css", str(css_file),
-                "--standalone",
-            ],
-            check=True, capture_output=True, timeout=120,
-        )
+        try:
+            subprocess.run(pandoc_args, check=True, capture_output=True, timeout=120)
+        except subprocess.CalledProcessError as e:
+            if not cover_enabled:
+                raise
+            detail = e.stderr.decode() if isinstance(e.stderr, bytes) else (e.stderr or "")
+            print(f"    [!] pandoc cover build failed; retrying without cover. {detail.strip()}")
+            fallback_args = [arg for arg in pandoc_args]
+            cover_idx = fallback_args.index("--epub-cover-image")
+            del fallback_args[cover_idx:cover_idx + 2]
+            subprocess.run(fallback_args, check=True, capture_output=True, timeout=120)
         prefer_kepub = build_cfg.get("prefer_kepub", False)
         if not prefer_kepub:
             print(f"  EPUB: {epub_path.name}")
@@ -2438,12 +2544,13 @@ def main():
 
             print("\nPhase 6: Building publication...")
             output_dir.mkdir(parents=True, exist_ok=True)
-            safe_title = re.sub(r"[^\w\s-]", "", selected["title"])[:50].strip().replace(" ", "_")
-            safe_topic_id = re.sub(r"[^\w-]", "_", selected.get("id", ""))[:12]
-            if safe_topic_id:
-                output_stem = output_dir / f"{file_date}-{safe_title}_{safe_topic_id}"
-            else:
-                output_stem = output_dir / f"{file_date}-{safe_title}"
+            output_stem = make_output_stem(
+                output_dir=output_dir,
+                file_date=file_date,
+                title=selected["title"],
+                topic_id=selected.get("id", ""),
+            )
+            source_label = selected.get("source_name") or selected.get("item_type") or "AI sources"
 
             with tempfile.TemporaryDirectory() as tmp:
                 publication_path = build_publication(
@@ -2452,6 +2559,8 @@ def main():
                     Path(tmp),
                     selected["title"],
                     build_cfg,
+                    publication_date=file_date,
+                    source_label=source_label,
                 )
 
             delivered = False

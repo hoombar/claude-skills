@@ -44,8 +44,17 @@ cp <skill-dir>/kobo_reader_state/sources.example.yaml <skill-dir>/kobo_reader_st
 - Set `delivery.gws_drive.folder_id` to your Kobo Drive folder ID.
 - If needed, set `delivery.gws_drive.config_dir` to your write-profile config directory.
 - Tune RSS feeds, scoring, and model settings.
+- Keep `build.publisher` set to the desired Kobo library publisher (default: `Ben Pearson`).
+- Keep `build.cover_enabled: true` unless cover generation causes a device-specific rendering issue.
 
 3. Keep delivery mode as `gws_drive` unless you explicitly want local staging (`pull`).
+
+## EPUB Build Defaults
+
+- Output filenames preserve spaces for Kobo wrapping: `YYYYMMDD - Topic Title - source id.epub`.
+- The script writes Pandoc `title`, `author`, and `publisher` metadata.
+- A simple per-article SVG cover is generated from the title, date, source label, and publisher, then passed to Pandoc with `--epub-cover-image`.
+- If cover generation or Pandoc cover handling fails, the script logs a warning and retries without the cover.
 
 ## Running
 

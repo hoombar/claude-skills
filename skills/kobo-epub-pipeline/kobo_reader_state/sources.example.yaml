@@ -124,6 +124,17 @@ generation:
   max_source_chars: 40000     # text fed to the generator (stay well under arg limits)
 
 # ---------------------------------------------------------------------------
+# Build settings
+# ---------------------------------------------------------------------------
+build:
+  prefer_kepub: false         # true => attempt kepubify conversion after pandoc
+  keep_epub_when_kepub: false # retain both files when conversion succeeds
+  epub_base_font_percent: 50  # smaller default text for Kobo
+  epub_line_height: 1.35      # readable but compact on e-ink
+  publisher: "Ben Pearson"    # EPUB publisher/author metadata for Kobo library display
+  cover_enabled: true         # generate a simple per-article EPUB cover at build time
+
+# ---------------------------------------------------------------------------
 # Delivery backend
 #
 # Recommended for Kobo cloud pull: gws_drive mode.

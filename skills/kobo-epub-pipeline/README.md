@@ -67,6 +67,8 @@ Edit `kobo_reader_state/sources.yaml`:
 - Set `delivery.mode` (recommended: `gws_drive`)
 - Set `delivery.gws_drive.folder_id`
 - Optionally set `delivery.gws_drive.config_dir` for machine-profile isolation
+- Set `build.publisher` if you want a publisher other than `Ben Pearson`
+- Keep `build.cover_enabled: true` for generated per-article covers
 
 Run the pipeline:
 
@@ -93,5 +95,11 @@ python3 kobo_daily_reader.py --topic-id cluster:abc123def45678
 - A topic cluster is moved from `pending` to `processed` only after delivery succeeds.
 - If delivery fails, the cluster stays in `pending` and is retried on the next run.
 - This makes the pipeline queue-safe for intermittent network or service failures.
+
+## EPUB Output
+
+- Filenames preserve spaces for Kobo wrapping: `YYYYMMDD - Topic Title - source id.epub`.
+- EPUB metadata includes `title`, `author`, and `publisher`.
+- Generated covers are enabled by default and fall back cleanly to a no-cover build if Pandoc rejects the cover asset.
 
 See [`SKILL.md`](SKILL.md) for full setup and troubleshooting details.
