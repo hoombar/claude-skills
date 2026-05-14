@@ -1,11 +1,11 @@
 ---
 name: obsidian-braindump-retro
-description: Review marked braindump blocks from Obsidian daily notes, connect recurring ideas across days, and distill them into actions, idea threads, and retrospective notes. Use when the user wants to process captured thoughts from daily notes, run a weekly retro, or turn fragmented notes into organized follow-up.
+description: Review marked braindump blocks from Obsidian daily notes, route captures into existing durable notes, and produce a short next-action checklist plus a slim retro receipt. Use when the user wants to process captured thoughts from daily notes, run a weekly retro, or turn fragmented notes into organized follow-up.
 ---
 
 # Obsidian Braindump Retro
 
-Process low-friction thought captures from Obsidian daily notes into structured outputs without making capture itself heavy or formal.
+Process low-friction thought captures from Obsidian daily notes into routed notes and a small action checklist without making capture itself heavy or formal.
 
 ## When To Use This Skill
 
@@ -22,7 +22,7 @@ Use this skill when the user wants to:
 This skill works best when the vault has:
 
 1. A daily note template with a dedicated marker block for braindumps
-2. A single AI-managed folder for runtime state and retro notes
+2. A single AI-managed folder for runtime state, action checklists, and retro receipts
 3. A clear adoption date after which the marker pattern is considered active
 
 If the vault separates human-owned notes from AI-managed notes, do not write into the human-owned area without explicit permission.
@@ -63,6 +63,7 @@ AI/
     runtime/
       logs/
       retros/
+      actions/
       threads/
       state/
 ```
@@ -71,6 +72,7 @@ Recommended runtime files:
 
 - `AI/Braindump Retro/runtime/logs/YYYY-MM.jsonl`
 - `AI/Braindump Retro/runtime/retros/braindump-retro-YYYY-MM-DD.md`
+- `AI/Braindump Retro/runtime/actions/braindump-retro-actions-YYYY-MM-DD.md`
 - `AI/Braindump Retro/runtime/threads/<thread-slug>.md`
 - `AI/Braindump Retro/runtime/state/latest-checkpoint.json`
 - `AI/Braindump Retro/runtime/state/active-threads.md`
@@ -145,32 +147,44 @@ Assign each capture a stable id using the note date plus ordinal position.
    - fleeting thought
    - question
 7. Decide whether to:
-   - link to an existing thread
-   - create a new thread
-   - promote to an action
-   - merge into an existing note
+   - file into an existing AI-managed note
+   - append to an existing history, plan, ideas, or next-steps note
+   - create a short action in the run action checklist
+   - link to an existing thread only when no better durable note exists yet
+   - create a new thread only for repeated or genuinely emerging themes with no existing destination
    - discard
-8. Create a retro summary note
-9. Update the monthly log, thread notes, and checkpoint state
-10. Propose any edits to user-owned notes before making them
+8. Apply safe AI-managed filings immediately. Examples:
+   - workout logs go into an existing training history note
+   - project ideas go into that project's existing ideas, plan, or next-steps note
+   - one-off follow-ups go into the run action checklist
+9. Create a slim retro receipt
+10. Create or update a high-signal action checklist
+11. Update the monthly log, thread notes, and checkpoint state
+12. Propose any edits to user-owned notes before making them
 
 ## Output Shape
 
-A good retro output should include:
+The retro note is a routing receipt, not the product. Keep it extremely slim.
 
-- `New threads`
-- `Existing threads strengthened`
-- `Actions for today or this week`
-- `Note candidates`
-- `Discarded or low-signal items`
-- `Open questions`
+Include only:
 
-For each promoted or linked item, include:
+- review window
+- daily notes with non-empty marked braindumps
+- routing summary: destination notes and action checklist
+- explicit statement when user-owned notes were not modified
 
-- source note
-- raw capture id
-- target thread or note
-- short reasoning
+Do not include long reasoning, long raw captures, thread essays, or broad synthesis in the retro receipt. Put durable detail where it belongs:
+
+- project-related ideas go into existing project ideas, plans, or next-steps notes
+- logs go into existing history notes
+- concrete follow-ups go into `runtime/actions/braindump-retro-actions-YYYY-MM-DD.md`
+- thread notes are only for items that need incubation and have no existing destination
+
+The action checklist is the main user-facing output. Keep it short, high signal, and directly triageable:
+
+- one checkbox per action
+- link the relevant destination note when useful
+- avoid explanation unless needed to make the action executable
 
 ## Thread Notes
 
@@ -217,15 +231,15 @@ The main memory surfaces should be:
 
 - the active thread index
 - the current retro window
+- routed project/history notes
+- action checklists
 - concise thread notes
-- recent retro summaries
+- slim retro receipts
 
 ## What Success Looks Like
 
-After running this skill, the user should be able to answer:
+After running this skill, the user should be able to scan the action checklist and answer:
 
-- What new ideas appeared?
-- What keeps resurfacing?
 - What needs action now?
-- Which captures should become proper notes or projects?
-- What can be safely discarded?
+- Where did the captured material get filed?
+- Which items can be ignored because they were already handled?
