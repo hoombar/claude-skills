@@ -1,21 +1,21 @@
 flowchart TD
   A[Run: cron or manual] --> B[Load sources.yaml and queue.json]
-  B --> C[Discover article candidates<br/>arXiv + RSS]
-  C --> D[Fetch social signals<br/>HN + Reddit boosts]
-  D --> E[Score article candidates]
-  E --> F[Cluster candidates into topics<br/>LLM with heuristic fallback]
-  F --> G{Enough multi-source clusters?}
-  G -->|no| H[Widen discovery window once]
-  H --> C
-  G -->|yes| I[Score and save cluster queue]
+  B --> C[Discover candidates<br/>curated URLs + HTML indexes + arXiv + RSS]
+  C --> D[Fetch social radar<br/>HN + Reddit boosts]
+  D --> E[Apply hard filters<br/>off-topic, legal, promo, low-signal pages]
+  E --> F[Score single-source candidates<br/>relevance, practicality, evidence, durability, freshness, novelty, source quality]
+  F --> G{Quality gate enabled?}
+  G -->|yes| H[LLM gate top candidates]
+  G -->|no| I[Use ranked queue]
+  H --> I
   I --> J{--dry-run?}
-  J -->|yes| K[Print ranked clusters<br/>save queue and exit]
-  J -->|no| L[Select cluster<br/>top score or --topic-id]
-  L --> M[Fetch full content for each source<br/>PDF, HTML, or summary fallback]
-  M --> N[Generate synthesized draft<br/>Claude or Codex]
-  N --> O[Run critic pass<br/>against combined source material]
+  J -->|yes| K[Print ranked candidates<br/>save queue and exit]
+  J -->|no| L[Select topic<br/>top score, --count, or --topic-id]
+  L --> M[Fetch full source content<br/>PDF, HTML, or summary fallback]
+  M --> N[Generate guided explainer<br/>Claude or Codex]
+  N --> O[Run critic pass<br/>same provider/model]
   O --> P[Assemble final Markdown<br/>+ source provenance + Critic Notes]
-  P --> Q[Render diagram blocks to PNG]
+  P --> Q[Render DOT diagrams to PNG<br/>Mermaid legacy fallback]
   Q --> R[Build EPUB with pandoc]
   R --> S{delivery.mode}
   S -->|gws_drive| T[Upload EPUB to Google Drive]
@@ -24,7 +24,7 @@ flowchart TD
   T --> W{Delivery confirmed?}
   U --> W
   V --> W
-  W -->|yes| X[Move cluster pending -> processed]
-  W -->|no| Y[Keep cluster in pending for retry]
+  W -->|yes| X[Move topic pending -> processed]
+  W -->|no| Y[Keep topic in pending for retry]
   X --> Z[Save queue.json]
   Y --> Z

@@ -3,61 +3,335 @@
 # Script reads this on every run; no restart needed.
 
 # ---------------------------------------------------------------------------
-# arXiv — primary AI research papers
+# arXiv — targeted AI engineering papers
 # ---------------------------------------------------------------------------
 arxiv:
-  categories:
-    - cs.AI    # Artificial Intelligence
-    - cs.CL    # Computation and Language (NLP)
-    - cs.LG    # Machine Learning
-  max_results_per_category: 15
-  days_back: 7
+  categories: []
+  queries:
+    - label: "agent evaluation"
+      query: 'all:"agent evaluation" OR all:"agent eval" OR all:"AI agents evaluation"'
+    - label: "context engineering"
+      query: 'all:"context engineering" OR all:"agent memory" OR all:"tool use"'
+    - label: "coding agents"
+      query: 'all:"coding agents" OR all:"software engineering agents" OR all:"code agents"'
+    - label: "mobile AI engineering"
+      query: 'all:"mobile" AND all:"agent" AND all:"software engineering"'
+  authority: 0.76
+  focus: "Agent, eval, context, and software-engineering papers with practical product/platform relevance"
+  rationale: "Useful when papers contain reusable methods, empirical results, or architecture lessons."
+  max_results_per_category: 4
+  max_total_results: 20
+  days_back: 120
 
 # ---------------------------------------------------------------------------
-# RSS feeds — lab blogs and curated newsletters
+# Manual override source URLs — high-signal practical reads.
+# Keep this small. Ongoing discovery should come from rss_feeds/html_indexes.
+# ---------------------------------------------------------------------------
+curated_sources: []
+
+# ---------------------------------------------------------------------------
+# HTML indexes — durable source pages without a clean public RSS feed.
+# The crawler collects matching links from these pages each run.
+# ---------------------------------------------------------------------------
+html_indexes:
+  - name: "Anthropic Engineering"
+    url: "https://www.anthropic.com/engineering"
+    authority: 0.96
+    layer: "practitioner_core"
+    role: "driver"
+    source_type: "engineering_blog"
+    max_links: 10
+    url_contains:
+      - "/engineering/"
+    include_keywords:
+      - agent
+      - eval
+      - context
+      - harness
+      - Claude Code
+      - computer use
+      - tool
+      - memory
+    exclude_keywords:
+      - featured
+    topic_tags: ["agents", "evals", "context engineering", "harness engineering"]
+    default_summary: "Anthropic engineering post related to agents, evals, context, or applied AI systems."
+    focus: "AI lab engineering posts about agents, evals, context, and production harnesses"
+    rationale: "Primary engineering source with concrete implementation and evaluation lessons."
+
+# ---------------------------------------------------------------------------
+# RSS feeds — practitioner-led discovery (idea drivers) + radar
 # authority: 0–1 weighting for the scoring model (higher = boosted)
+# layer:
+#   practitioner_core      -> primary idea drivers for selection
+#   practitioner_secondary -> useful supporting practitioner perspective
+#   radar                  -> trend awareness, lower trust for direct selection
+# role:
+#   driver | radar
+# ai_only:
+#   true -> keep only posts with AI-relevance keyword matches in title/summary
 #
 # NOTE: Some of these URLs may need verification — RSS feed paths occasionally
 # change. If a feed returns no entries, update the URL.
 # ---------------------------------------------------------------------------
 rss_feeds:
-  # First-party lab blogs
-  - name: "Anthropic Blog"
-    url: "https://www.anthropic.com/news/rss"
-    authority: 1.0
-
-  - name: "OpenAI Blog"
+  # Durable engineering/product AI sources
+  - name: "OpenAI News"
     url: "https://openai.com/news/rss.xml"
-    authority: 1.0
-
-  - name: "Google DeepMind Blog"
-    url: "https://deepmind.google/discover/blog/rss.xml"
-    authority: 1.0
-
-  - name: "Google Research Blog"
-    url: "https://ai.googleblog.com/feeds/posts/default"
     authority: 0.90
+    layer: "practitioner_core"
+    role: "driver"
+    source_type: "engineering_blog"
+    ai_only: true
+    max_entries: 30
+    include_keywords:
+      - agent
+      - agents
+      - Codex
+      - eval
+      - harness
+      - computer
+      - workflow
+      - data agent
+      - safety
+    exclude_keywords:
+      - pricing
+      - partnership
+      - funding
+      - policy
+    topic_tags: ["agents", "Codex", "evals", "harness engineering"]
+    focus: "OpenAI agent, Codex, eval, safety, and applied product-engineering posts"
+    rationale: "Primary source for OpenAI agent and coding-agent product infrastructure."
 
-  - name: "Meta AI Blog"
-    url: "https://ai.meta.com/blog/rss/"
+  - name: "Cloudflare Blog"
+    url: "https://blog.cloudflare.com/rss/"
     authority: 0.90
+    layer: "practitioner_core"
+    role: "driver"
+    source_type: "engineering_blog"
+    ai_only: true
+    max_entries: 40
+    include_keywords:
+      - agent
+      - agents
+      - MCP
+      - AI engineering
+      - sandbox
+      - Workers AI
+      - tool
+      - context
+      - developer
+    exclude_keywords:
+      - outage
+      - pricing
+      - acquisition
+    topic_tags: ["MCP", "agent platform", "sandboxing", "developer tooling"]
+    focus: "Production AI infrastructure, MCP, agent tooling, and sandboxing architecture"
+    rationale: "High-signal infrastructure case studies from a platform engineering organization."
 
-  # Curated newsletters
+  - name: "LangChain Blog"
+    url: "https://blog.langchain.com/rss/"
+    authority: 0.88
+    layer: "practitioner_core"
+    role: "driver"
+    source_type: "engineering_blog"
+    ai_only: true
+    max_entries: 40
+    include_keywords:
+      - agent
+      - agents
+      - eval
+      - LangSmith
+      - context
+      - memory
+      - skills
+      - MCP
+      - deployment
+    exclude_keywords:
+      - webinar
+      - event
+      - hiring
+    topic_tags: ["agent evals", "LangSmith", "context engineering", "skills"]
+    focus: "Agent evaluation, observability, context engineering, and production workflow patterns"
+    rationale: "Practitioner tooling source with concrete examples and customer case studies."
+
+  - name: "Android Developers Blog"
+    url: "https://android-developers.googleblog.com/feeds/posts/default"
+    authority: 0.88
+    layer: "practitioner_core"
+    role: "driver"
+    source_type: "engineering_blog"
+    ai_only: true
+    max_entries: 30
+    include_keywords:
+      - AI
+      - agent
+      - agents
+      - Gemini
+      - AppFunctions
+      - Android Bench
+      - skills
+      - assistant
+    topic_tags: ["Android", "mobile agents", "AI-assisted development", "AppFunctions"]
+    focus: "Android platform and tooling changes that affect AI-assisted mobile engineering"
+    rationale: "Primary mobile-platform source for Android AI integration and coding-agent support."
+
+  - name: "Google Developers Blog"
+    url: "https://developers.googleblog.com/feeds/posts/default"
+    authority: 0.82
+    layer: "practitioner_secondary"
+    role: "driver"
+    source_type: "engineering_blog"
+    ai_only: true
+    max_entries: 30
+    include_keywords:
+      - agent
+      - agents
+      - ADK
+      - A2UI
+      - Gemini
+      - Gemma
+      - MCP
+      - generative UI
+    topic_tags: ["ADK", "A2UI", "Gemini", "agentic tooling"]
+    focus: "Google developer tooling for agents, generative UI, and AI product surfaces"
+    rationale: "Useful for AI-native product interfaces and agent tooling beyond mobile."
+
+  - name: "GitHub Blog"
+    url: "https://github.blog/feed/"
+    authority: 0.82
+    layer: "practitioner_secondary"
+    role: "driver"
+    source_type: "engineering_blog"
+    ai_only: true
+    max_entries: 40
+    include_keywords:
+      - Copilot
+      - agent
+      - agents
+      - coding agent
+      - MCP
+      - workflow
+      - developer
+    exclude_keywords:
+      - sale
+      - universe
+    topic_tags: ["Copilot", "coding agents", "developer workflow", "MCP"]
+    focus: "Coding-agent workflows, developer tooling, and platform changes around GitHub"
+    rationale: "Practical source for mainstream coding-agent adoption and developer workflow changes."
+
+  - name: "Datadog Engineering"
+    url: "https://www.datadoghq.com/blog/engineering/index.xml"
+    authority: 0.88
+    layer: "practitioner_core"
+    role: "driver"
+    source_type: "engineering_blog"
+    ai_only: true
+    max_entries: 30
+    include_keywords:
+      - agent
+      - agents
+      - AI
+      - eval
+      - SRE
+      - observability
+      - LLM
+    topic_tags: ["SRE agents", "evals", "observability", "production AI"]
+    focus: "Production observability, SRE agents, and eval platforms"
+    rationale: "Concrete production engineering lessons for reliable AI systems."
+
+  # Practitioner core (high practical signal for product engineers)
   - name: "Simon Willison"
     url: "https://simonwillison.net/atom/everything/"
-    authority: 0.85
+    authority: 0.78
+    layer: "practitioner_secondary"
+    role: "driver"
+    ai_only: true
+    focus: "LLM tools, practical prompting, applied agent workflows"
+    rationale: "Useful practitioner analysis; treated as support rather than automatic primary driver."
 
+  - name: "Victor Dibia"
+    url: "https://newsletter.victordibia.com/feed"
+    authority: 0.95
+    layer: "practitioner_core"
+    role: "driver"
+    ai_only: true
+    focus: "Agent and context engineering patterns for real builds"
+    rationale: "Strong practical guidance on skills, context, and agent implementation."
+
+  - name: "Hamel Husain"
+    url: "https://hamel.dev/index.xml"
+    authority: 0.92
+    layer: "practitioner_core"
+    role: "driver"
+    ai_only: true
+    focus: "LLM evals, reliability, and production AI workflows"
+    rationale: "Clear frameworks for evaluating and shipping AI products safely."
+
+  - name: "dbreunig"
+    url: "https://www.dbreunig.com/feed.xml"
+    authority: 0.90
+    layer: "practitioner_core"
+    role: "driver"
+    ai_only: true
+    focus: "Agent development process, system prompts, product engineering tradeoffs"
+    rationale: "Pragmatic engineering patterns oriented to product teams."
+
+  - name: "Shreya Shankar"
+    url: "https://www.sh-reya.com/rss.xml"
+    authority: 0.88
+    layer: "practitioner_core"
+    role: "driver"
+    ai_only: true
+    focus: "Evaluation strategy, measurement, and model behavior analysis"
+    rationale: "High-signal content on evals and evidence-based AI iteration."
+
+  # Practitioner secondary (good context, somewhat broader audience)
+  - name: "Chip Huyen"
+    url: "https://huyenchip.com/feed.xml"
+    authority: 0.82
+    layer: "practitioner_secondary"
+    role: "driver"
+    ai_only: true
+    focus: "GenAI platform patterns and practical pitfalls"
+    rationale: "Helpful explainer pieces for product-minded engineers."
+
+  - name: "One Useful Thing (Ethan Mollick)"
+    url: "https://www.oneusefulthing.org/feed"
+    authority: 0.80
+    layer: "practitioner_secondary"
+    role: "driver"
+    ai_only: true
+    focus: "Applied AI usage patterns and interface-level adoption insights"
+    rationale: "Useful framing for what to adopt now vs ignore."
+
+  # Radar only (trend detection; lower trust as direct idea drivers)
   - name: "Interconnects (Nathan Lambert)"
     url: "https://www.interconnects.ai/feed"
-    authority: 0.85
+    authority: 0.74
+    layer: "radar"
+    role: "radar"
+    ai_only: true
+    focus: "Open-model ecosystem and model release analysis"
+    rationale: "Useful for trend spotting; verify with independent practitioner sources."
+
+  - name: "Latent Space"
+    url: "https://www.latent.space/feed"
+    authority: 0.58
+    layer: "radar"
+    role: "radar"
+    ai_only: true
+    focus: "AI ecosystem updates and occasional deep implementation content"
+    rationale: "High cadence but mixed depth; use as discovery/radar, not default source material."
 
   - name: "Import AI (Jack Clark)"
     url: "https://jack-clark.net/feed/"
-    authority: 0.85
-
-  - name: "The Batch (DeepLearning.AI)"
-    url: "https://www.deeplearning.ai/the-batch/rss/"
-    authority: 0.80
+    authority: 0.68
+    layer: "radar"
+    role: "radar"
+    ai_only: true
+    focus: "AI industry and policy pulse with selected technical highlights"
+    rationale: "Strong situational awareness; not always directly implementation-focused."
 
 # ---------------------------------------------------------------------------
 # Social signals — discovery layer only, NOT used as article content
@@ -67,15 +341,16 @@ social_signals:
   hacker_news:
     enabled: true
     min_points: 100   # ignore low-engagement stories
-    days_back: 7
+    days_back: 120
 
   reddit:
     enabled: true
     subreddits:
       - MachineLearning
       - LocalLLaMA
+      - singularity
     min_score: 50
-    days_back: 7
+    days_back: 120
 
 # ---------------------------------------------------------------------------
 # Topic clustering — select shared topics, not one-off source articles
@@ -86,13 +361,14 @@ social_signals:
 # ---------------------------------------------------------------------------
 clustering:
   enabled: true
-  days_back: 7
-  fallback_days_back: 14
-  min_distinct_sources: 2
+  days_back: 120
+  fallback_days_back: 120
+  min_distinct_sources: 3
   max_candidates: 60
   max_candidates_per_source: 8
   max_clusters: 12
-  novelty_window_days: 30
+  novelty_window_days: 120
+  source_pair_cooldown_days: 120
   fallback_if_llm_fails: true
   scoring:
     breadth_weight: 0.35
@@ -109,19 +385,88 @@ clustering:
 # diversity:  penalty if same source appeared in recent articles
 # ---------------------------------------------------------------------------
 scoring:
-  authority_weight: 0.40
-  social_weight:    0.30
+  authority_weight: 0.30
+  social_weight:    0.10
   recency_weight:   0.20
-  diversity_weight: 0.10
-  recency_half_life_days: 3  # score halves every N days
+  diversity_weight: 0.40
+  recency_half_life_days: 45  # score halves every N days
+
+# ---------------------------------------------------------------------------
+# Selection strategy
+# prefer_layers: true -> choose practitioner layers first, then fallback
+# allow_fallback_layers: true -> if no preferred candidate passes gate, use fallback
+# ---------------------------------------------------------------------------
+selection:
+  mode: "single_source_deep_read"
+  best_available: true
+  freshness_days: 120
+  similarity_window_days: 120
+  source_cooldown_days: 21
+  max_candidates_per_source: 3
+  min_single_source_score: 0.0
+  fallback_to_clusters: true
+  prefer_layers: true
+  allow_fallback_layers: true
+  preferred_layers:
+    - practitioner_core
+    - practitioner_secondary
+  fallback_layers:
+    - research_primary
+    - radar
+    - unknown
 
 # ---------------------------------------------------------------------------
 # Generation settings
 # ---------------------------------------------------------------------------
 generation:
-  model: "claude-opus-4-6"
-  target_words: 4000          # ~20 min read
-  max_source_chars: 40000     # text fed to the generator (stay well under arg limits)
+  provider: "codex"            # claude | codex
+  claude_model: "claude-opus-4-6"
+  codex_model: "gpt-5.3-codex"
+  target_read_minutes: 20      # used to compute target_words when unset
+  words_per_minute: 190        # reading speed assumption for estimate/caps
+  target_words: 3600           # default tuned for ~20 min session
+  hard_max_words: 4200         # prompt-enforced upper bound
+  max_source_chars: 40000      # text fed to the generator (stay well under arg limits)
+
+# ---------------------------------------------------------------------------
+# Batch run settings
+# ---------------------------------------------------------------------------
+batch:
+  max_count_per_run: 10       # safety rail for --count
+
+# ---------------------------------------------------------------------------
+# Quality gate settings
+# Hybrid mode:
+# 1) hard deterministic filter for obvious legal/promo boilerplate
+# 2) LLM gate on top-K candidates before final selection
+# ---------------------------------------------------------------------------
+quality:
+  enabled: true
+  mode: "hybrid"
+  gate_scope: "selection_top_k"
+  top_k: 5
+  reject_cache_days: 7
+  fail_mode: "closed" # closed => reject candidate if LLM gate errors
+  hard_filter:
+    exclude_title_patterns:
+      - "(?i)\\bterms?( and| &)conditions\\b"
+      - "(?i)\\bterms? of (service|use)\\b"
+      - "(?i)\\bprivacy policy\\b"
+      - "(?i)\\bofficial rules?\\b"
+      - "(?i)\\bcontest\\b"
+      - "(?i)\\bsweepstakes\\b"
+      - "(?i)\\beligibility\\b"
+      - "(?i)\\blegal notice\\b"
+    exclude_url_patterns:
+      - "(?i)/legal/"
+      - "(?i)/terms"
+      - "(?i)/privacy"
+      - "(?i)/contest"
+      - "(?i)/sweepstakes"
+      - "(?i)/official-rules"
+    allow_title_patterns:
+      - "(?i)\\b(technical report|research|benchmark|evaluation|method|architecture|paper|arxiv)\\b"
+      - "(?i)\\b(how to|guide|deep dive|case study)\\b"
 
 # ---------------------------------------------------------------------------
 # Build settings
@@ -129,7 +474,7 @@ generation:
 build:
   prefer_kepub: false         # true => attempt kepubify conversion after pandoc
   keep_epub_when_kepub: false # retain both files when conversion succeeds
-  epub_base_font_percent: 50  # smaller default text for Kobo
+  epub_base_font_percent: 50  # smaller default text for Kobo (half of previous baseline)
   epub_line_height: 1.35      # readable but compact on e-ink
   publisher: "Ben Pearson"    # EPUB publisher/author metadata for Kobo library display
   cover_enabled: true         # generate a simple per-article EPUB cover at build time
@@ -149,10 +494,17 @@ delivery:
   mode: "gws_drive"
   pull:
     inbox_dir: "~/kobo_pull_inbox"   # sync this folder to Drive/Dropbox
-    link_latest: true                # writes Daily_Deep_Dive_Latest.kepub.epub
+    link_latest: false               # avoid alias churn; keep one immutable file per article
     post_stage_command: ""           # optional command; placeholders: {file} {name} {dir}
   gws_drive:
-    folder_id: "REPLACE_WITH_YOUR_DRIVE_FOLDER_ID"
-    config_dir: ""                                   # optional gws config dir override
+    folder_id: "REPLACE_WITH_YOUR_DRIVE_FOLDER_ID"    # Rakuten Kobo folder
+    config_dir: ""                                    # optional gws config dir override
     upload_latest_alias: false
-    latest_alias_name: "Daily_Deep_Dive_Latest.kepub.epub"
+    latest_alias_name: "Latest.kepub.epub"
+    retention:
+      enabled: true
+      max_age_days: 14
+      name_prefix: "20"
+      name_suffix: ".epub"
+      page_size: 200
+      dry_run: false

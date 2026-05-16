@@ -30,6 +30,7 @@ import tempfile
 from calendar import timegm
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urljoin
 
 import feedparser
 import requests
@@ -59,6 +60,11 @@ BUILD_TOOL_HINTS = {
     "pandoc": "Install pandoc before running the full pipeline.",
     "dot": "Install Graphviz (`dot`) for diagram rendering in the EPUB.",
     "mmdc": "Install Mermaid CLI (`mmdc`) only if you want Mermaid fallback rendering.",
+}
+
+MONTH_LOOKUP = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
 }
 
 QUALITY_DEFAULTS = {
@@ -92,6 +98,39 @@ QUALITY_DEFAULTS = {
             r"(?i)\b(how to|guide|deep dive|case study)\b",
         ],
     },
+}
+
+SELECTION_DEFAULTS = {
+    "mode": "single_source_deep_read",
+    "best_available": True,
+    "freshness_days": 120,
+    "similarity_window_days": 120,
+    "source_cooldown_days": 21,
+    "min_single_source_score": 0.0,
+    "fallback_to_clusters": True,
+    "topic_keywords": [
+        "agent", "agents", "eval", "evals", "evaluation", "harness",
+        "context", "context engineering", "memory", "tool use", "mcp",
+        "model context protocol", "coding agent", "code agent", "workflow",
+        "automation", "product engineering", "platform engineering",
+        "mobile", "android", "developer tools", "second brain",
+        "obsidian", "notion", "todoist", "adversarial",
+    ],
+    "practical_keywords": [
+        "production", "case study", "how we", "lessons", "playbook",
+        "guide", "architecture", "implementation", "pipeline", "workflow",
+        "debugging", "reliability", "observability", "deployment",
+        "tooling", "developer experience", "dx", "android", "mobile",
+    ],
+    "evidence_keywords": [
+        "benchmark", "measured", "metric", "metrics", "results",
+        "evaluation", "eval", "experiment", "study", "deployed",
+        "production", "at scale", "open source", "github",
+    ],
+    "news_penalty_keywords": [
+        "launch", "announces", "announced", "release notes", "roundup",
+        "weekly", "newsletter", "funding", "acquires", "rumor",
+    ],
 }
 
 # ---------------------------------------------------------------------------
@@ -178,6 +217,13 @@ def merge_quality_config(raw_cfg):
     return cfg
 
 
+def merge_selection_config(raw_cfg):
+    cfg = dict(SELECTION_DEFAULTS)
+    if isinstance(raw_cfg, dict):
+        cfg.update(raw_cfg)
+    return cfg
+
+
 def build_feed_meta_index(feeds_cfg):
     index = {}
     for feed in feeds_cfg or []:
@@ -189,6 +235,7 @@ def build_feed_meta_index(feeds_cfg):
             "source_role": feed.get("role", "driver"),
             "source_focus": feed.get("focus", ""),
             "source_rationale": feed.get("rationale", ""),
+            "source_type": feed.get("source_type", "rss"),
             "authority": feed.get("authority"),
         }
     return index
@@ -215,6 +262,8 @@ def enrich_topic_source_metadata(topic, feed_meta):
         for key in ("source_layer", "source_role", "source_focus", "source_rationale"):
             if not topic.get(key):
                 topic[key] = meta.get(key, "")
+        if not topic.get("source_type"):
+            topic["source_type"] = meta.get("source_type", "rss")
         if "authority" not in topic or topic.get("authority") is None:
             topic["authority"] = meta.get("authority", topic.get("authority"))
         return
@@ -277,12 +326,25 @@ def fetch_arxiv(cfg, days_back):
         print("  [arXiv] 'arxiv' package not installed — skipping. pip install arxiv")
         return candidates
 
-    for category in cfg.get("categories", []):
-        print(f"  arXiv [{category}]...")
+    searches = []
+    for category in cfg.get("categories", []) or []:
+        searches.append((category, f"cat:{category}"))
+    for query in cfg.get("queries", []) or []:
+        label = str(query.get("label") or query.get("query") or "query")
+        searches.append((label, str(query.get("query", "")).strip()))
+
+    seen = set()
+    max_total = int(cfg.get("max_total_results", 0) or 0)
+    for label, query in searches:
+        if max_total and len(candidates) >= max_total:
+            break
+        if not query:
+            continue
+        print(f"  arXiv [{label}]...")
         try:
             client = arxiv_lib.Client()
             search = arxiv_lib.Search(
-                query=f"cat:{category}",
+                query=query,
                 max_results=cfg.get("max_results_per_category", 15),
                 sort_by=arxiv_lib.SortCriterion.SubmittedDate,
             )
@@ -290,6 +352,9 @@ def fetch_arxiv(cfg, days_back):
                 if paper.published and paper.published < cutoff:
                     break
                 raw_id = paper.entry_id.split("/")[-1]  # e.g. "2401.12345v1"
+                if raw_id in seen:
+                    continue
+                seen.add(raw_id)
                 tid = f"arxiv:{raw_id}"
                 candidates.append({
                     "id": tid,
@@ -297,18 +362,142 @@ def fetch_arxiv(cfg, days_back):
                     "summary": paper.summary.replace("\n", " ")[:600],
                     "url": paper.entry_id,
                     "pdf_url": paper.pdf_url,
-                    "source_name": f"arXiv ({category})",
+                    "source_name": f"arXiv ({label})",
+                    "source_type": "academic_paper",
                     "source_layer": "research_primary",
                     "source_role": "driver",
-                    "source_focus": "peer-reviewed or preprint AI research",
-                    "source_rationale": "Primary research source with highest technical fidelity.",
+                    "source_focus": cfg.get("focus", "AI engineering papers with applied product/platform relevance"),
+                    "source_rationale": cfg.get("rationale", "Primary research source; selected only when practical relevance is strong."),
                     "authority": authority,
                     "published": paper.published.isoformat() if paper.published else None,
                     "authors": [a.name for a in paper.authors[:3]],
                     "social": {"hn_points": 0, "reddit_score": 0},
                 })
+                if max_total and len(candidates) >= max_total:
+                    break
         except Exception as e:
-            print(f"    arXiv error [{category}]: {e}")
+            print(f"    arXiv error [{label}]: {e}")
+    return candidates
+
+
+def source_keyword_allowed(title, summary, source_cfg):
+    blob = f"{title} {summary}".lower()
+    include = [str(k).lower() for k in source_cfg.get("include_keywords", []) or []]
+    exclude = [str(k).lower() for k in source_cfg.get("exclude_keywords", []) or []]
+    if include and not any(k in blob for k in include):
+        return False
+    if exclude and any(k in blob for k in exclude):
+        return False
+    return True
+
+
+def extract_trailing_display_date(title):
+    match = re.search(
+        r"\s+([A-Z][a-z]{2})\s+(\d{1,2}),\s+(\d{4})\s*$",
+        str(title or ""),
+    )
+    if not match:
+        return title, None
+    month = MONTH_LOOKUP.get(match.group(1).lower())
+    if not month:
+        return title, None
+    day = int(match.group(2))
+    year = int(match.group(3))
+    cleaned = title[:match.start()].strip()
+    published = datetime(year, month, day, tzinfo=timezone.utc)
+    return cleaned, published
+
+
+def fetch_curated_sources(items_cfg, days_back):
+    candidates = []
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
+    for item in items_cfg or []:
+        title = str(item.get("title", "")).strip()
+        url = str(item.get("url", "")).strip()
+        if not title or not url:
+            continue
+        published = parse_iso_dt(item.get("published"))
+        if published and published < cutoff:
+            continue
+        source_name = str(item.get("source_name") or item.get("publisher") or "Curated source").strip()
+        candidates.append({
+            "id": item.get("id") or f"curated:{make_topic_id(url, title)}",
+            "title": title,
+            "summary": str(item.get("summary", "")).strip()[:900],
+            "url": url,
+            "pdf_url": item.get("pdf_url"),
+            "source_name": source_name,
+            "source_type": item.get("source_type", "curated_article"),
+            "source_layer": item.get("layer", "practitioner_core"),
+            "source_role": item.get("role", "driver"),
+            "source_focus": item.get("focus", ""),
+            "source_rationale": item.get("rationale", ""),
+            "authority": item.get("authority", 0.88),
+            "published": published.isoformat() if published else item.get("published"),
+            "authors": item.get("authors", []),
+            "topic_tags": item.get("topic_tags", []),
+            "social": {"hn_points": 0, "reddit_score": 0},
+        })
+    return candidates
+
+
+def fetch_html_indexes(indexes_cfg, days_back):
+    candidates = []
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; kobo-reader/1.0)"}
+    for index_cfg in indexes_cfg or []:
+        name = str(index_cfg.get("name", "HTML source")).strip()
+        url = str(index_cfg.get("url", "")).strip()
+        if not url:
+            continue
+        print(f"  HTML [{name}]...")
+        try:
+            r = requests.get(url, headers=headers, timeout=30)
+            r.raise_for_status()
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(r.text, "html.parser")
+            max_links = int(index_cfg.get("max_links", 12))
+            seen = set()
+            for anchor in soup.find_all("a", href=True):
+                title = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True)).strip()
+                title, published = extract_trailing_display_date(title)
+                href = urljoin(url, anchor.get("href", ""))
+                if not title or not href or href in seen:
+                    continue
+                if published and published < cutoff:
+                    continue
+                seen.add(href)
+                required = index_cfg.get("url_contains", []) or []
+                if required and not any(str(piece) in href for piece in required):
+                    continue
+                excluded = index_cfg.get("url_exclude", []) or []
+                if excluded and any(str(piece) in href for piece in excluded):
+                    continue
+                summary = str(index_cfg.get("default_summary", "")).strip()
+                if not source_keyword_allowed(title, summary, index_cfg):
+                    continue
+                candidates.append({
+                    "id": f"html:{make_topic_id(href, title)}",
+                    "title": title,
+                    "summary": summary[:900],
+                    "url": href,
+                    "pdf_url": None,
+                    "source_name": name,
+                    "source_type": index_cfg.get("source_type", "engineering_blog"),
+                    "source_layer": index_cfg.get("layer", "practitioner_core"),
+                    "source_role": index_cfg.get("role", "driver"),
+                    "source_focus": index_cfg.get("focus", ""),
+                    "source_rationale": index_cfg.get("rationale", ""),
+                    "authority": index_cfg.get("authority", 0.86),
+                    "published": published.isoformat() if published else None,
+                    "authors": [],
+                    "topic_tags": index_cfg.get("topic_tags", []),
+                    "social": {"hn_points": 0, "reddit_score": 0},
+                })
+                if len([c for c in candidates if c.get("source_name") == name]) >= max_links:
+                    break
+        except Exception as e:
+            print(f"    HTML index error [{name}]: {e}")
     return candidates
 
 
@@ -323,29 +512,36 @@ def fetch_rss(feeds_cfg, days_back):
         role = feed_conf.get("role", "driver")
         focus = feed_conf.get("focus", "")
         rationale = feed_conf.get("rationale", "")
+        source_type = feed_conf.get("source_type", "rss")
+        topic_tags = feed_conf.get("topic_tags", [])
         ai_only = bool(feed_conf.get("ai_only", True))
         print(f"  RSS [{name}]...")
         try:
             feed = feedparser.parse(url)
-            for entry in feed.entries[:20]:
+            max_entries = int(feed_conf.get("max_entries", 20))
+            for entry in feed.entries[:max_entries]:
                 parsed = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
                 pub = datetime.fromtimestamp(timegm(parsed), tz=timezone.utc) if parsed else None
                 if pub and pub < cutoff:
                     continue
                 summary = re.sub(r"<[^>]+>", " ", getattr(entry, "summary", "") or "").strip()
+                title = getattr(entry, "title", "").strip()
                 if ai_only:
-                    search_blob = f"{getattr(entry, 'title', '')} {summary}".lower()
+                    search_blob = f"{title} {summary}".lower()
                     if not any(kw in search_blob for kw in AI_KEYWORDS):
                         continue
+                if not source_keyword_allowed(title, summary, feed_conf):
+                    continue
                 link = getattr(entry, "link", "")
-                tid = f"rss:{make_topic_id(link, entry.title)}"
+                tid = f"rss:{make_topic_id(link, title)}"
                 candidates.append({
                     "id": tid,
-                    "title": entry.title.strip(),
+                    "title": title,
                     "summary": summary[:600],
                     "url": link,
                     "pdf_url": None,
                     "source_name": name,
+                    "source_type": source_type,
                     "source_layer": layer,
                     "source_role": role,
                     "source_focus": focus,
@@ -353,6 +549,7 @@ def fetch_rss(feeds_cfg, days_back):
                     "authority": authority,
                     "published": pub.isoformat() if pub else None,
                     "authors": [],
+                    "topic_tags": topic_tags,
                     "social": {"hn_points": 0, "reddit_score": 0},
                 })
         except Exception as e:
@@ -460,6 +657,136 @@ def score_candidate(c, hn_signal, reddit_signal, queue, weights, half_life_days,
         "reddit_score": reddit_pts,
     }
     return total, breakdown, social_debug
+
+
+def keyword_score(text, keywords):
+    blob = str(text or "").lower()
+    if not keywords:
+        return 0.0
+    hits = 0
+    for keyword in keywords:
+        if str(keyword).lower() in blob:
+            hits += 1
+    return min(hits / max(min(len(keywords), 8), 1), 1.0)
+
+
+def processed_topic_sets(queue, days):
+    cutoff = now_utc() - timedelta(days=max(int(days), 1))
+    items = []
+    for item in queue.get("processed", []):
+        delivered = parse_iso_dt(item.get("delivered"))
+        if delivered and delivered < cutoff:
+            continue
+        text = " ".join([
+            str(item.get("title", "")),
+            str(item.get("summary", "")),
+            str(item.get("topic_key", "")),
+            " ".join(item.get("topic_tags", []) or []),
+        ])
+        key = topic_similarity_key(text)
+        if key:
+            items.append(set(key.split()))
+    return items
+
+
+def novelty_for_candidate(candidate, queue, days):
+    candidate_tokens = set(topic_similarity_key(
+        " ".join([
+            str(candidate.get("title", "")),
+            str(candidate.get("summary", "")),
+            " ".join(candidate.get("topic_tags", []) or []),
+        ])
+    ).split())
+    if not candidate_tokens:
+        return 1.0
+    worst_overlap = 0.0
+    for processed_tokens in processed_topic_sets(queue, days):
+        if not processed_tokens:
+            continue
+        overlap = len(candidate_tokens & processed_tokens) / max(len(candidate_tokens), 1)
+        worst_overlap = max(worst_overlap, overlap)
+    if worst_overlap >= 0.55:
+        return 0.1
+    if worst_overlap >= 0.35:
+        return 0.45
+    return 1.0
+
+
+def source_cooldown_score(candidate, queue, days):
+    source = str(candidate.get("source_name", "")).strip()
+    if not source:
+        return 1.0
+    cutoff = now_utc() - timedelta(days=max(int(days), 1))
+    for item in reversed(queue.get("processed", [])):
+        delivered = parse_iso_dt(item.get("delivered"))
+        if delivered and delivered < cutoff:
+            continue
+        sources = item.get("source_names") or []
+        if item.get("source_name"):
+            sources = [*sources, item.get("source_name")]
+        if source in sources:
+            return 0.45
+    return 1.0
+
+
+def score_single_source_candidate(candidate, queue, selection_cfg, half_life_days):
+    title = str(candidate.get("title", ""))
+    summary = str(candidate.get("summary", ""))
+    focus = str(candidate.get("source_focus", ""))
+    rationale = str(candidate.get("source_rationale", ""))
+    tags = " ".join(candidate.get("topic_tags", []) or [])
+    text = " ".join([title, summary, focus, rationale, tags])
+
+    relevance = keyword_score(text, selection_cfg.get("topic_keywords", []))
+    practicality = keyword_score(text, selection_cfg.get("practical_keywords", []))
+    evidence = keyword_score(text, selection_cfg.get("evidence_keywords", []))
+    newsiness = keyword_score(text, selection_cfg.get("news_penalty_keywords", []))
+
+    source_layer = str(candidate.get("source_layer", "unknown"))
+    source_type = str(candidate.get("source_type", "rss"))
+    authority = float(candidate.get("authority", 0.5) or 0.5)
+    source_quality = authority
+    if source_type in {"curated_article", "engineering_blog", "case_study"}:
+        source_quality = min(source_quality + 0.10, 1.0)
+    if source_layer == "radar":
+        source_quality = max(source_quality - 0.20, 0.0)
+
+    published = parse_published(candidate)
+    if published:
+        age = (now_utc() - published).total_seconds() / 86400
+        freshness = max(0.0, min(1.0, 0.5 ** (age / max(half_life_days, 1))))
+    else:
+        freshness = 0.45
+
+    novelty = novelty_for_candidate(
+        candidate, queue, selection_cfg.get("similarity_window_days", 120)
+    )
+    cooldown = source_cooldown_score(
+        candidate, queue, selection_cfg.get("source_cooldown_days", 21)
+    )
+    durability = max(practicality, evidence, 0.55 if source_type == "academic_paper" else 0.0)
+    durability = max(0.0, durability - (newsiness * 0.35))
+
+    breakdown = {
+        "relevance": round(relevance * 0.20, 4),
+        "practicality": round(practicality * 0.20, 4),
+        "evidence": round(evidence * 0.18, 4),
+        "durability": round(durability * 0.16, 4),
+        "freshness": round(freshness * 0.08, 4),
+        "novelty": round(novelty * 0.10, 4),
+        "source_quality": round(source_quality * cooldown * 0.08, 4),
+    }
+    total = round(sum(breakdown.values()), 4)
+    if source_type == "academic_paper":
+        total = round(total * 0.88, 4)
+        breakdown["academic_source_penalty"] = 0.88
+    breakdown["total"] = total
+    breakdown["source_cooldown"] = round(cooldown, 4)
+    candidate["selection_reason"] = (
+        "single-source practical deep read scored for relevance, practicality, "
+        "evidence, durability, freshness, novelty, and source quality"
+    )
+    return total, breakdown
 
 
 # ---------------------------------------------------------------------------
@@ -744,6 +1071,21 @@ def cluster_novelty_score(cluster, queue, novelty_window_days):
     return 1.0
 
 
+def cluster_source_pair_cooldown(cluster, queue, days=120):
+    sources = set(cluster.get("source_names") or distinct_source_names(cluster.get("articles", [])))
+    if len(sources) < 2:
+        return 1.0
+    cutoff = now_utc() - timedelta(days=max(int(days), 1))
+    for item in queue.get("processed", []):
+        delivered = parse_iso_dt(item.get("delivered"))
+        if delivered and delivered < cutoff:
+            continue
+        previous = set(item.get("source_names", []) or [])
+        if len(sources & previous) >= 2:
+            return 0.55
+    return 1.0
+
+
 def score_cluster(cluster, queue, cluster_cfg, half_life_days):
     articles = cluster.get("articles", []) or []
     source_count = len(distinct_source_names(articles))
@@ -752,17 +1094,21 @@ def score_cluster(cluster, queue, cluster_cfg, half_life_days):
     recency = cluster_recency_score(articles, half_life_days)
     social = cluster_social_score(articles)
     novelty = cluster_novelty_score(cluster, queue, cluster_cfg.get("novelty_window_days", 30))
+    pair_cooldown = cluster_source_pair_cooldown(
+        cluster, queue, cluster_cfg.get("source_pair_cooldown_days", 120)
+    )
 
     weights = cluster_cfg.get("scoring", {}) or {}
     breakdown = {
         "breadth": round(breadth * float(weights.get("breadth_weight", 0.35)), 4),
-        "authority": round(authority * float(weights.get("authority_weight", 0.20)), 4),
+        "authority": round(authority * pair_cooldown * float(weights.get("authority_weight", 0.20)), 4),
         "recency": round(recency * float(weights.get("recency_weight", 0.20)), 4),
         "social": round(social * float(weights.get("social_weight", 0.15)), 4),
         "novelty": round(novelty * float(weights.get("novelty_weight", 0.10)), 4),
     }
     total = round(sum(breakdown.values()), 4)
     breakdown["total"] = total
+    breakdown["source_pair_cooldown"] = round(pair_cooldown, 4)
     return total, breakdown
 
 
@@ -937,11 +1283,11 @@ def llm_quality_gate(topic, gen_cfg, quality_cfg):
     prompt = f"""SYSTEM: You are a strict quality gate for topic selection.
 Return ONLY JSON. No markdown.
 
-Goal: decide whether this topic is a high-learning-value deep-dive candidate for an engineer trying to keep up with meaningful AI progress.
+Goal: decide whether this topic is a high-learning-value deep-dive candidate for a product/platform engineer who uses AI at work and in personal automation systems.
 
-Reject topics that are mostly legal/contest/compliance/policy boilerplate, pure promotion, or low technical depth.
+Reject topics that are mostly legal/contest/compliance/policy boilerplate, pure promotion, shallow news, launch coverage with no reusable technical insight, or speculative research with no practical signal.
 
-Accept topics with substantive technical or research learning value.
+Accept topics with substantive practical learning value: agent harnesses, evaluations, context engineering, tool use, coding agents, AI-assisted workflows, mobile/platform engineering implications, or proven creative AI workflows.
 
 Output exactly:
 {{
@@ -1288,7 +1634,9 @@ SOURCE MATERIAL:
 ---
 
 REQUIREMENTS:
-- Write a cohesive article: key ideas, why they matter, implications for practitioners.
+- Write a cohesive guided explainer, not a news summary and not a raw paper conversion.
+- Include these sections in substance, with natural heading names: the problem this solves, why it matters to a product/platform/mobile engineer, the core idea in plain English, how the technique/system works, what is proven vs speculative, and practical takeaways for work.
+- When relevant, call out implications for personal AI workflows, second-brain/memory systems, or local automation.
 - Keep readability high and acronym density low.
 - On first use of any acronym, always expand it as `Long Form (ACR)`. After first use, acronym-only is allowed.
 - Include a short `## Terms and Acronyms` section near the end with at most 8 entries in plain English.
@@ -1436,13 +1784,9 @@ def format_source_provenance(topic):
     ]
 
     if breakdown:
-        lines.append(
-            "- Score components: "
-            f"authority `{breakdown.get('authority', 0):.3f}`, "
-            f"social `{breakdown.get('social', 0):.3f}`, "
-            f"recency `{breakdown.get('recency', 0):.3f}`, "
-            f"diversity `{breakdown.get('diversity', 0):.3f}`"
-        )
+        lines.append(f"- Score components: {format_score_breakdown(breakdown)}")
+    if topic.get("selection_reason"):
+        lines.append(f"- Selection reason: {topic.get('selection_reason')}")
     lines.append(
         f"- Social radar used only for prioritization: HN `{social.get('hn_points', 0)}` | Reddit `{social.get('reddit_score', 0)}`"
     )
@@ -2208,11 +2552,13 @@ def configured_scoring(sources):
     return weights, scoring_cfg.get("recency_half_life_days", 3)
 
 
-def discover_articles(sources, queue, feed_meta, quality_cfg, quality_enabled, ref_now, days_back):
+def discover_articles(sources, queue, feed_meta, quality_cfg, quality_enabled, ref_now, days_back, selection_cfg=None):
     arxiv_cfg = dict(sources.get("arxiv", {}))
     arxiv_cfg["days_back"] = days_back
 
     candidates = []
+    candidates += fetch_curated_sources(sources.get("curated_sources", []), days_back)
+    candidates += fetch_html_indexes(sources.get("html_indexes", []), days_back)
     candidates += fetch_arxiv(arxiv_cfg, days_back)
     candidates += fetch_rss(sources.get("rss_feeds", []), days_back)
 
@@ -2226,7 +2572,7 @@ def discover_articles(sources, queue, feed_meta, quality_cfg, quality_enabled, r
     blocked_ids = processed_ids(queue)
     reject_idx = rejection_index(queue, ref_now) if quality_enabled else {}
     prior_articles = collect_candidate_articles(queue)
-    all_articles = unique_articles([*prior_articles, *candidates])
+    all_articles = unique_articles([*candidates, *prior_articles])
 
     ai_only_sources = {
         str(feed.get("name", "")).strip()
@@ -2259,9 +2605,20 @@ def discover_articles(sources, queue, feed_meta, quality_cfg, quality_enabled, r
                     ref_time=ref_now,
                 )
                 continue
-        score, breakdown, social_debug = score_candidate(
-            article, hn, reddit, queue, weights, half_life, include_components=True
-        )
+        if selection_cfg and selection_cfg.get("mode") == "single_source_deep_read":
+            score, breakdown = score_single_source_candidate(
+                article, queue, selection_cfg, half_life
+            )
+            social_debug = {
+                "hn_points": hn.get(article.get("url", ""), 0),
+                "reddit_score": reddit.get(
+                    re.sub(r"\W+", "_", article.get("title", "").lower())[:50], 0
+                ),
+            }
+        else:
+            score, breakdown, social_debug = score_candidate(
+                article, hn, reddit, queue, weights, half_life, include_components=True
+            )
         article["score"] = score
         article["score_breakdown"] = breakdown
         article.setdefault("social", {})
@@ -2315,6 +2672,54 @@ def discover_clusters(sources, queue, feed_meta, gen_cfg, cluster_cfg, quality_c
     return [], last_result or {"articles": [], "half_life": 3}, attempts[-1]
 
 
+def discover_single_sources(sources, queue, feed_meta, selection_cfg, quality_cfg, quality_enabled, ref_now):
+    days_back = int(selection_cfg.get("freshness_days", sources.get("arxiv", {}).get("days_back", 120)))
+    print(f"  Discovery window: {days_back} day(s)")
+    result = discover_articles(
+        sources,
+        queue,
+        feed_meta,
+        quality_cfg,
+        quality_enabled,
+        ref_now,
+        days_back,
+        selection_cfg=selection_cfg,
+    )
+    min_score = float(selection_cfg.get("min_single_source_score", 0.0) or 0.0)
+    articles = [a for a in result["articles"] if float(a.get("score", 0) or 0) >= min_score]
+    max_per_source = int(selection_cfg.get("max_candidates_per_source", 3) or 0)
+    if max_per_source > 0:
+        diversified = []
+        per_source = {}
+        for article in articles:
+            source = canonical_source_name(article.get("source_name", ""))
+            if per_source.get(source, 0) >= max_per_source:
+                continue
+            diversified.append(article)
+            per_source[source] = per_source.get(source, 0) + 1
+        articles = diversified
+    result["articles"] = articles
+    print(
+        f"\nDiscovery: {result['new_count']} fetched  |  "
+        f"{len(result['articles'])} single-source candidate(s)"
+    )
+    if result["off_topic"]:
+        print(f"  Pruned off-topic article candidates: {result['off_topic']}")
+    if quality_enabled:
+        print(f"  Quality hard-filtered article candidates: {result['hard_filtered']}")
+    return result
+
+
+def format_score_breakdown(breakdown):
+    parts = []
+    for key, value in (breakdown or {}).items():
+        if key == "total":
+            continue
+        if isinstance(value, (int, float)):
+            parts.append(f"{key} `{value:.3f}`")
+    return ", ".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -2350,24 +2755,10 @@ def main():
     delivery_cfg = sources.get("delivery", {})
     build_cfg = sources.get("build", {})
     batch_cfg = sources.get("batch", {})
-    selection_cfg = sources.get("selection", {})
+    selection_cfg = merge_selection_config(sources.get("selection", {}))
     cluster_cfg = merge_cluster_config(sources.get("clustering", {}))
     quality_cfg = merge_quality_config(sources.get("quality", {}))
     quality_enabled = bool(quality_cfg.get("enabled", True))
-    prefer_layers = bool(selection_cfg.get("prefer_layers", True))
-    allow_fallback_layers = bool(selection_cfg.get("allow_fallback_layers", True))
-    preferred_layers = set(
-        selection_cfg.get(
-            "preferred_layers",
-            ["practitioner_core", "practitioner_secondary"],
-        )
-    )
-    fallback_layers = set(
-        selection_cfg.get(
-            "fallback_layers",
-            ["research_primary", "radar", "unknown"],
-        )
-    )
     feed_meta = build_feed_meta_index(sources.get("rss_feeds", []))
     enriched = enrich_queue_metadata(queue, feed_meta)
     if enriched:
@@ -2402,20 +2793,47 @@ def main():
         print(f"Forced topic: {selected_topics[0]['title']}\n")
     else:
         print("Phase 1: Discovering topics...\n")
-        clusters, discovery_result, used_days_back = discover_clusters(
-            sources,
-            queue,
-            feed_meta,
-            gen_cfg,
-            cluster_cfg,
-            quality_cfg,
-            quality_enabled,
-            ref_now,
-        )
-        queue["pending"] = clusters
+        selection_mode = str(selection_cfg.get("mode", "single_source_deep_read"))
+        used_days_back = int(selection_cfg.get("freshness_days", 120))
+        if selection_mode == "single_source_deep_read":
+            discovery_result = discover_single_sources(
+                sources,
+                queue,
+                feed_meta,
+                selection_cfg,
+                quality_cfg,
+                quality_enabled,
+                ref_now,
+            )
+            queue["pending"] = discovery_result["articles"]
+            if not queue["pending"] and bool(selection_cfg.get("fallback_to_clusters", True)):
+                print("  No single-source candidates; falling back to cluster discovery.")
+                clusters, discovery_result, used_days_back = discover_clusters(
+                    sources,
+                    queue,
+                    feed_meta,
+                    gen_cfg,
+                    cluster_cfg,
+                    quality_cfg,
+                    quality_enabled,
+                    ref_now,
+                )
+                queue["pending"] = clusters
+        else:
+            clusters, discovery_result, used_days_back = discover_clusters(
+                sources,
+                queue,
+                feed_meta,
+                gen_cfg,
+                cluster_cfg,
+                quality_cfg,
+                quality_enabled,
+                ref_now,
+            )
+            queue["pending"] = clusters
 
         if not queue["pending"]:
-            print("No multi-source topic clusters found. Try widening clustering.days_back or adding sources.")
+            print("No eligible topics found. Try widening selection.freshness_days or adding sources.")
             sys.exit(0)
 
         if requested_count > max_batch_per_run:
@@ -2453,8 +2871,22 @@ def main():
                             ref_time=ref_now,
                         )
                 if len(selected_topics) < effective_count:
+                    if bool(selection_cfg.get("best_available", True)):
+                        selected_ids = {topic.get("id") for topic in selected_topics}
+                        for topic in eligible_pending:
+                            if topic.get("id") in selected_ids:
+                                continue
+                            topic["quality_gate"] = {
+                                "verdict": "best_available",
+                                "confidence": "low",
+                                "reason": "No higher-ranked candidate passed the LLM quality gate; selection.best_available=true.",
+                                "signals": ["other"],
+                            }
+                            selected_topics.append(topic)
+                            if len(selected_topics) >= effective_count:
+                                break
                     print(
-                        f"  [!] Quality gate approved {len(selected_topics)} topic(s) "
+                        f"  [!] Quality gate/best-available selected {len(selected_topics)} topic(s) "
                         f"out of requested {effective_count}."
                     )
                 print(
@@ -2465,7 +2897,7 @@ def main():
                 selected_topics = eligible_pending[:effective_count]
                 print(
                     f"  [DRY RUN] Quality LLM gate skipped; showing top {len(selected_topics)} "
-                    f"eligible clusters before LLM checks. Discovery window: {used_days_back} days."
+                    f"eligible topic(s) before LLM checks. Discovery window: {used_days_back} days."
                 )
         else:
             selected_topics = list(queue["pending"][:effective_count])
@@ -2482,7 +2914,8 @@ def main():
                 print(f"      {t.get('source_name', '')}  |  {pub}")
         else:
             preview_n = max(10, requested_count)
-            print(f"\n[DRY RUN] Top {preview_n} topic clusters:\n")
+            label = "topic clusters" if selected_topics and is_cluster_item(selected_topics[0]) else "single-source candidates"
+            print(f"\n[DRY RUN] Top {preview_n} {label}:\n")
             for i, t in enumerate(queue["pending"][:preview_n], 1):
                 pub = (t.get("published_range", {}).get("latest") or t.get("published") or "")[:10]
                 print(f"  {i:2}. [{t['score']:.3f}] {t['title'][:70]}")
@@ -2492,6 +2925,11 @@ def main():
                         print(f"          - {article.get('source_name', 'Unknown')}: {article.get('title', '')[:74]}")
                 else:
                     print(f"        {t.get('source_name', '')}  |  {pub}")
+                    components = format_score_breakdown(t.get("score_breakdown", {}))
+                    if components:
+                        print(f"        score: {components}")
+                    if t.get("selection_reason"):
+                        print(f"        reason: {t.get('selection_reason')}")
             print(f"\nWould generate {len(selected_topics)} topic(s) in non-dry mode.")
         save_queue(queue)
         print("\nQueue saved. Exiting (--dry-run).\n")
@@ -2592,6 +3030,14 @@ def main():
                         "source_name": selected.get("source_name"),
                         "source_layer": selected.get("source_layer"),
                         "source_role": selected.get("source_role"),
+                        "source_type": selected.get("source_type"),
+                        "source_url": selected.get("url"),
+                        "source_published": selected.get("published"),
+                        "summary": selected.get("summary", ""),
+                        "topic_key": topic_similarity_key(
+                            f"{selected.get('title', '')} {selected.get('summary', '')}"
+                        ),
+                        "topic_tags": selected.get("topic_tags", []),
                     })
                 queue.setdefault("processed", []).append(processed_entry)
                 delivered_items.append({"topic": selected, "epub_path": publication_path})
