@@ -6,6 +6,7 @@ A collection of reusable [Claude Code](https://docs.anthropic.com/en/docs/claude
 
 | Skill | Description |
 |-------|-------------|
+| [benpearson-dev-blog](skills/benpearson-dev-blog/) | Generate draft Hugo blog posts for benpearson.dev with the correct page bundle, frontmatter, draft workflow, and writing voice |
 | [kobo-epub-pipeline](skills/kobo-epub-pipeline/) | Generate and deliver Kobo deep-dive EPUBs with queueing, critic pass, and Google Drive pull sync |
 | [obsidian-braindump-retro](skills/obsidian-braindump-retro/) | Review marked Obsidian daily-note braindumps, connect recurring ideas, and produce structured retros |
 | [mermaid-from-code](skills/mermaid-from-code/) | Generate verified mermaid diagrams from codebases using adversarial generator+critic agents |
