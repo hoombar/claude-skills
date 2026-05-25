@@ -44,8 +44,83 @@ tags:
 3. Choose a lowercase hyphenated slug.
 4. Create `content/writing/<slug>/index.md` with `draft: true`.
 5. Draft using `references/ben-website-writing-style-profile.md`.
-6. Run an anti-AI editing pass before presenting the result.
-7. Tell the user how to preview locally.
+6. For engineer-facing AI workflow or automation posts, apply the structure guidance below before presenting the result.
+7. Run an anti-AI editing pass before presenting the result.
+8. Tell the user how to preview locally.
+
+## Engineer-Facing Post Structure
+
+When the likely audience is engineers interested in automation, agents, AI workflows, or practical system design, prefer a practical engineering narrative over an abstract essay.
+
+Use this shape unless the user asks for a different style:
+
+- Start with the concrete problem and why the obvious manual workflow fails.
+- Use distinct `##` sections so the article can be scanned.
+- Explain the system shape and the design choices that mattered.
+- Include implementation detail where it helps readers reuse the idea: inputs, selection, queueing, generation, review, delivery, feedback loops, failure modes.
+- Preserve Ben's judgement: make clear what the system does, what it does not do, and where human review remains.
+- End by extracting the reusable pattern or lesson, not with a generic conclusion.
+
+Good section types:
+
+- `## The Problem`
+- `## The Pattern`
+- `## Workflow 1: ...`
+- `## Design Choices That Matter`
+- `## Provenance And Review`
+- `## The Reusable Pattern`
+- `## The Trap`
+- `## What I Would Improve Next`
+
+## Quote Callouts
+
+Use Markdown blockquotes for significant ideas worth slowing down for. These should read like distilled claims, not motivational slogans.
+
+Good:
+
+```markdown
+> The hard part is not finding more AI material. It is turning the right material into attention I will actually spend.
+```
+
+Use 2-4 quote callouts in a medium-length post. Prefer them for:
+
+- The core thesis.
+- A surprising design choice.
+- A reusable principle.
+- A trap or warning.
+
+Avoid quote callouts for generic lines like "AI is changing how we work".
+
+## Mermaid Diagrams
+
+When a subject is complicated, creative, or has multiple workflow steps, include a Mermaid diagram rather than explaining everything in prose.
+
+Use diagrams for:
+
+- Pipelines: discovery -> filtering -> generation -> review -> delivery.
+- Feedback loops: output -> human judgement -> tuning.
+- Agent workflows with multiple roles or handoffs.
+- Architecture where the boundary between human judgement and AI automation matters.
+
+Keep diagrams readable:
+
+- Prefer one high-level diagram over several dense diagrams.
+- Use semantic node names, not `A`, `B`, `C`, except for tiny examples.
+- Keep labels short; use `<br/>` for line breaks inside nodes.
+- Explain the design choices after the diagram.
+
+Example:
+
+````markdown
+```mermaid
+flowchart TD
+  Sources[Noisy source streams<br/>papers, posts, feeds] --> Filter[Filter and score]
+  Filter --> Adapt[AI adaptation layer<br/>summarise, explain, critique]
+  Adapt --> Output[Readable or listenable output]
+  Output --> Judgement[Human judgement<br/>read, reject, follow up]
+  Judgement --> Sources
+```
+````
 
 ## Voice Rules
 
@@ -57,6 +132,7 @@ Use the bundled style profile as the source of truth. In short:
 - Prefer flowing sentences over clipped, choppy prose.
 - Be confident where the point is clear, but leave room for judgement.
 - Avoid generic AI openings, SaaS brochure language, over-polished symmetry, and forced casualness.
+- For technical audiences, prefer concrete system details over high-level reflection. The reflective point should emerge from the workflow details.
 
 ## Common Mistakes
 
@@ -68,6 +144,9 @@ Use the bundled style profile as the source of truth. In short:
 | Publishing because the user said "quickly" | Keep `draft: true` unless explicitly told to publish |
 | Reading the vault style note at runtime | Use the bundled style reference in this skill |
 | Writing generic AI prose | Revise against the style profile before presenting |
+| Writing one long unsectioned essay for an engineer audience | Add `##` sections, quote callouts, and diagrams where the workflow has steps |
+| Explaining a multi-step automation only in prose | Add a Mermaid diagram and then explain the design choices |
+| Staying too abstract for agent/workflow posts | Include inputs, handoffs, review steps, delivery path, and failure modes |
 
 ## Publishing
 
