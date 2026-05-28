@@ -43,10 +43,38 @@ tags:
 2. If the topic, angle, `content_type`, or source material is unclear, ask before drafting.
 3. Choose a lowercase hyphenated slug.
 4. Create `content/writing/<slug>/index.md` with `draft: true`.
-5. Draft using the generator-critic workflow below and `references/ben-website-writing-style-profile.md`.
+5. Draft using the article quality principles, generator-critic workflow, `references/ben-website-writing-style-profile.md`, and `references/ben-blog-feedback-patterns.md`.
 6. For engineer-facing AI workflow or automation posts, apply the structure guidance below before presenting the result.
 7. Run an anti-AI editing pass before presenting the result.
 8. Tell the user how to preview locally.
+
+## Article Quality Principles
+
+Use these principles before and during generation. They are not a replacement for Ben's voice; they are checks that help the post become interesting and understandable.
+
+- Start with a concrete moment, number, conflict, decision, or surprising observation rather than the topic in the abstract.
+- Make the reader promise clear: why should someone keep reading this post?
+- Bring out the tension: what was confusing, broken, annoying, surprising, or non-obvious?
+- Assume the reader may be unfamiliar with the concept Ben is introducing. Comprehension is more important than strict brevity.
+- Move from concrete detail to reusable pattern. Do not start with the general lesson unless the source material demands it.
+- Prefer examples, before/after comparisons, loops, and small scenes when they help the idea land.
+- Cut sections that only restate the thesis or make the post sound tidier without adding understanding.
+- Avoid a neat essay voice where every paragraph sounds too balanced, symmetrical, or final.
+- End with useful judgement or an unresolved tradeoff, not a polished moral.
+
+### Reader Comprehension Test
+
+Before cutting structure for minimalism, ask whether a reader new to the idea would understand the post faster with the extra scaffolding. Keep scaffolding when it helps comprehension.
+
+Use diagrams, bullets, tables, or code blocks when they explain something prose would make harder to hold in the reader's head, especially:
+
+- A feedback loop.
+- A pipeline or sequence of steps.
+- A system boundary or handoff.
+- A cause/effect chain.
+- A comparison that needs multiple variables visible at once.
+
+Remove these elements only when they duplicate nearby prose or add visual noise without improving understanding.
 
 ## Generator-Critic Drafting Workflow
 
@@ -81,7 +109,7 @@ After the first draft exists, critique it adversarially before presenting it to 
 - Over-explaining obvious context while under-explaining the interesting mechanism.
 - AI-ish rhythm: neat symmetry, generic lessons, corporate phrasing, or over-smoothed transitions.
 - Unclear audience: too much detail for a general reader, or too little for a technical reader.
-- Tables, diagrams, or code blocks that add formatting noise rather than clarity.
+- Tables, diagrams, or code blocks that add formatting noise rather than clarity, while preserving any that help a reader understand a new concept or mental model.
 - A conclusion that feels too tidy or moralising.
 
 The critic should produce a short internal review, not a user-facing essay. Prioritise the 3-6 changes most likely to improve the post.
@@ -95,7 +123,7 @@ Revise the draft by applying the critic's strongest points:
 - Add missing specifics from the source material where they improve trust or usefulness.
 - Reorder sections if the argument currently arrives too late.
 - Replace abstract claims with practical consequences.
-- Remove any quote callout, table, diagram, or code block that does not earn its place.
+- Keep diagrams, tables, quote callouts, and code blocks when they materially improve reader comprehension, especially for unfamiliar workflows or concepts. Remove them only when they duplicate prose or add noise without helping understanding.
 - Keep Ben's voice plain and owned; do not make the rewrite sound like marketing copy.
 
 Only after the rewrite should the post be considered ready to show. If the critic finds a major source-material gap that cannot be fixed safely, ask Ben one short question rather than inventing detail.
@@ -207,3 +235,23 @@ Use the bundled style profile as the source of truth. In short:
 Publishing is a separate explicit action. To publish, the user must ask for it or approve it clearly. The publishing edit is to remove `draft: true` or set `draft: false`, then commit and push according to the repo workflow.
 
 If the user asks to "push it live", "publish", "deploy", or similar, treat that as explicit publishing intent. If the wording is only "draft", "preview", "prepare", "write", or "generate", keep `draft: true` and do not commit or push.
+
+## Post-Generation Feedback Loop
+
+Use this only after an article draft or rewrite has been generated and Ben gives feedback. Do not let the feedback-training mechanism distract from first producing the best article possible.
+
+If Ben provides sentences, paragraphs, or sections he dislikes:
+
+1. Rewrite the specific text first.
+2. Briefly explain what changed and why.
+3. Extract any durable writing preference that should apply to future posts.
+4. Propose the preference rule before writing it down.
+5. If Ben approves, update `references/ben-blog-feedback-patterns.md` in both the local skill and the `~/dev/claude-skills` repo copy when available.
+
+Feedback examples worth capturing:
+
+- Sentences that sound too generic, tidy, or AI-written.
+- Places where useful diagrams or scaffolding were removed too aggressively.
+- Missing context that made the post harder for an unfamiliar reader to understand.
+- Phrases that sound unlike Ben's judgement or rhythm.
+- Overly neat conclusions that should leave more room for tradeoff or uncertainty.
