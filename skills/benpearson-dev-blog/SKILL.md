@@ -43,10 +43,64 @@ tags:
 2. If the topic, angle, `content_type`, or source material is unclear, ask before drafting.
 3. Choose a lowercase hyphenated slug.
 4. Create `content/writing/<slug>/index.md` with `draft: true`.
-5. Draft using `references/ben-website-writing-style-profile.md`.
+5. Draft using the generator-critic workflow below and `references/ben-website-writing-style-profile.md`.
 6. For engineer-facing AI workflow or automation posts, apply the structure guidance below before presenting the result.
 7. Run an anti-AI editing pass before presenting the result.
 8. Tell the user how to preview locally.
+
+## Generator-Critic Drafting Workflow
+
+Use a two-pass generator and critic pattern for new posts and substantial rewrites. The goal is not to make the post sound more polished; it is to make the argument sharper, more specific, and less generically AI-written.
+
+### Pass 1: Generator
+
+Write the first draft as a generator with a clear brief:
+
+- Identify the real point Ben is trying to make, not just the topic.
+- Choose the strongest narrative angle and opening problem.
+- Preserve concrete details from the source material: dates, numbers, tools, constraints, decisions, failures, and tradeoffs.
+- Structure the post with scannable `##` sections.
+- Include quote callouts and Mermaid diagrams only where they clarify the argument.
+- Prefer a slightly rough but specific draft over a smooth generic one.
+
+Before writing the file, decide whether the post is mainly:
+
+- A practical engineering narrative.
+- A reflective personal post.
+- A lab note or implementation write-up.
+- A hybrid of those forms.
+
+### Pass 2: Critic
+
+After the first draft exists, critique it adversarially before presenting it to Ben. The critic should look for:
+
+- A weak or generic opening.
+- Claims that sound plausible but are not supported by the source material.
+- Missing concrete details that would make the post more useful.
+- Sections that repeat the same point in different words.
+- Over-explaining obvious context while under-explaining the interesting mechanism.
+- AI-ish rhythm: neat symmetry, generic lessons, corporate phrasing, or over-smoothed transitions.
+- Unclear audience: too much detail for a general reader, or too little for a technical reader.
+- Tables, diagrams, or code blocks that add formatting noise rather than clarity.
+- A conclusion that feels too tidy or moralising.
+
+The critic should produce a short internal review, not a user-facing essay. Prioritise the 3-6 changes most likely to improve the post.
+
+### Pass 3: Rewrite
+
+Revise the draft by applying the critic's strongest points:
+
+- Fix the opening if it does not start from a concrete problem or observation.
+- Cut duplicated or generic paragraphs.
+- Add missing specifics from the source material where they improve trust or usefulness.
+- Reorder sections if the argument currently arrives too late.
+- Replace abstract claims with practical consequences.
+- Remove any quote callout, table, diagram, or code block that does not earn its place.
+- Keep Ben's voice plain and owned; do not make the rewrite sound like marketing copy.
+
+Only after the rewrite should the post be considered ready to show. If the critic finds a major source-material gap that cannot be fixed safely, ask Ben one short question rather than inventing detail.
+
+When the Task tool is available and the task is substantial, prefer using separate subagents for the generator and critic passes, then synthesize the final rewrite yourself. The generator may write or propose the draft; the critic should be read-only and adversarial.
 
 ## Engineer-Facing Post Structure
 
