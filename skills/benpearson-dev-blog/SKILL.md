@@ -40,13 +40,15 @@ tags:
 ## Workflow
 
 1. Read the Hugo repo README.
-2. If the topic, angle, `content_type`, or source material is unclear, ask before drafting.
+2. If the topic, angle, `content_type`, source material, concrete examples, implementation details, or external links are unclear, ask concise questions before drafting rather than guessing.
 3. Choose a lowercase hyphenated slug.
 4. Create `content/writing/<slug>/index.md` with `draft: true`.
 5. Draft using the article quality principles, generator-critic workflow, `references/ben-website-writing-style-profile.md`, and `references/ben-blog-feedback-patterns.md`.
 6. For engineer-facing AI workflow or automation posts, apply the structure guidance below before presenting the result.
 7. Run an anti-AI editing pass before presenting the result.
-8. Tell the user how to preview locally.
+8. Run a reader-question pass: list what an interested reader might still ask after reading the draft, then either answer those questions in the article, ask Ben for the missing detail, or explicitly leave them out if they are out of scope.
+9. Check that named external projects, repositories, tools, posts, and references have appropriate links when a public URL is known or can be safely discovered. Ask Ben when the link target is ambiguous.
+10. Tell the user how to preview locally.
 
 ## Article Quality Principles
 
@@ -58,6 +60,7 @@ Use these principles before and during generation. They are not a replacement fo
 - Assume the reader may be unfamiliar with the concept Ben is introducing. Comprehension is more important than strict brevity.
 - Move from concrete detail to reusable pattern. Do not start with the general lesson unless the source material demands it.
 - Prefer examples, before/after comparisons, loops, and small scenes when they help the idea land.
+- Prefer enough implementation detail that an interested reader could reuse the pattern: configuration boundaries, prompts, schemas, commands, permission models, and worked examples when relevant.
 - Cut sections that only restate the thesis or make the post sound tidier without adding understanding.
 - Avoid a neat essay voice where every paragraph sounds too balanced, symmetrical, or final.
 - End with useful judgement or an unresolved tradeoff, not a polished moral.
@@ -110,9 +113,22 @@ After the first draft exists, critique it adversarially before presenting it to 
 - AI-ish rhythm: neat symmetry, generic lessons, corporate phrasing, or over-smoothed transitions.
 - Unclear audience: too much detail for a general reader, or too little for a technical reader.
 - Tables, diagrams, or code blocks that add formatting noise rather than clarity, while preserving any that help a reader understand a new concept or mental model.
+- Missing links for named external projects, repos, tools, source material, or public references.
+- Reader questions left unanswered: after reading the draft, what would a practical reader ask next, and does the article answer it?
 - A conclusion that feels too tidy or moralising.
 
 The critic should produce a short internal review, not a user-facing essay. Prioritise the 3-6 changes most likely to improve the post.
+
+For practical engineering articles, the critic must include a reader-question check before approving the draft. It should identify questions a reader might reasonably ask, such as:
+
+- What exactly is configured?
+- What credentials, permissions, or accounts are separated?
+- What prompt, schema, command, or file shape is used?
+- Where can I see the referenced tool, skill, repo, or source?
+- What is a concrete example of the workflow over time?
+- What can go wrong, and how is the risk contained?
+
+If the article cannot safely answer a useful reader question from the available source material, ask Ben a concise question before inventing details.
 
 ### Pass 3: Rewrite
 
@@ -121,12 +137,16 @@ Revise the draft by applying the critic's strongest points:
 - Fix the opening if it does not start from a concrete problem or observation.
 - Cut duplicated or generic paragraphs.
 - Add missing specifics from the source material where they improve trust or usefulness.
+- Add public links for named tools, repos, references, or external projects when available and relevant.
+- Add worked examples, prompt excerpts, schema snippets, command examples, or before/after flows when they help the reader reuse the idea.
 - Reorder sections if the argument currently arrives too late.
 - Replace abstract claims with practical consequences.
 - Keep diagrams, tables, quote callouts, and code blocks when they materially improve reader comprehension, especially for unfamiliar workflows or concepts. Remove them only when they duplicate prose or add noise without helping understanding.
 - Keep Ben's voice plain and owned; do not make the rewrite sound like marketing copy.
 
 Only after the rewrite should the post be considered ready to show. If the critic finds a major source-material gap that cannot be fixed safely, ask Ben one short question rather than inventing detail.
+
+When multiple missing details would materially improve the article, ask Ben a short grouped question before drafting or rewriting. Prefer specific prompts such as: "Which credential boundary is safe to describe publicly?", "Can I quote or paraphrase the actual prompt?", "What frontmatter fields should be shown?", or "What is one real example of this compounding over time?"
 
 When the Task tool is available and the task is substantial, prefer using separate subagents for the generator and critic passes, then synthesize the final rewrite yourself. The generator may write or propose the draft; the critic should be read-only and adversarial.
 
