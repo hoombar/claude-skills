@@ -9,6 +9,7 @@ This file captures durable preferences learned from Ben's feedback on generated 
 - Keep Mermaid diagrams when they clarify a feedback loop, workflow, system boundary, or new mental model. Do not remove them just because the loop can also be written as bullets.
 - Be careful with critic passes that over-prune structure. The critic should improve the article, not flatten useful scaffolding.
 - When a sentence feels too generic, rewrite it toward practical consequence: what changed, what became easier, what tradeoff became visible, or what decision became possible.
+- Avoid overusing "The useful ..." as a sentence pattern. Name the specific thing instead, such as "The boundary that matters...", "The practical change...", or "What this changes...".
 
 ## Sentence Feedback Workflow
 
