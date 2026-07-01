@@ -93,6 +93,7 @@ A raw capture is a single fragment from a daily note. An idea thread is a higher
 - `new`: extracted but not yet reviewed
 - `linked`: connected to a thread or related note
 - `actioned`: converted into a concrete task or next step
+- `question`: reviewed but blocked on user clarification
 - `discarded`: reviewed and intentionally ignored
 
 ### Idea thread lifecycle
@@ -109,6 +110,8 @@ Repeated thoughts across different days are a signal, not noise. Do not deduplic
 
 Never use the current month as the review boundary.
 
+The checkpoint and ledger are mandatory runtime state. Do not run this workflow by simply grepping all daily notes and routing whatever is found.
+
 The review window must be driven by a checkpoint file, not by the ledger partition.
 
 1. Read `runtime/state/latest-checkpoint.json` if it exists
@@ -118,6 +121,8 @@ The review window must be driven by a checkpoint file, not by the ledger partiti
 5. Load every daily note and every monthly log partition touched by that time range
 
 Monthly partitioning is only a storage optimization. It must never limit the retrospective window.
+
+Before routing anything, build a set of already-ledgered `capture_id` values from every loaded monthly log. If a capture id already exists, skip it unless the user explicitly asks for a reprocess.
 
 ## Extraction Rules
 
@@ -136,9 +141,12 @@ Assign each capture a stable id using the note date plus ordinal position.
 1. Determine the review window from the checkpoint
 2. Load marked daily-note captures in that window
 3. Load only the monthly log partitions touched by that window
-4. Load the active thread index
-5. Load only the thread notes that appear relevant
-6. Classify each capture:
+4. Load current and recent action checklists under `runtime/actions/` to detect semantic duplicates before adding new actions
+5. Load the active thread index
+6. Load only the thread notes that appear relevant
+7. Assign stable ids using note date plus ordinal position
+8. Drop any capture whose stable id is already present in the loaded ledger partitions, unless the user explicitly requested reprocessing
+9. Classify each remaining capture:
    - action
    - idea
    - project-related
@@ -146,21 +154,37 @@ Assign each capture a stable id using the note date plus ordinal position.
    - research topic
    - fleeting thought
    - question
-7. Decide whether to:
+10. Decide whether to:
    - file into an existing AI-managed note
    - append to an existing history, plan, ideas, or next-steps note
    - create a short action in the run action checklist
+   - add a clarifying question in the run action checklist when the correct destination or interpretation is ambiguous
    - link to an existing thread only when no better durable note exists yet
    - create a new thread only for repeated or genuinely emerging themes with no existing destination
    - discard
-8. Apply safe AI-managed filings immediately. Examples:
+11. Apply safe AI-managed filings immediately. Examples:
    - workout logs go into an existing training history note
+   - workout workflow questions, such as whether a separate training log should exist or whether weekly retro should update it, should become clarifying questions unless the user has already established the rule
    - project ideas go into that project's existing ideas, plan, or next-steps note
    - one-off follow-ups go into the run action checklist
-9. Create a slim retro receipt
-10. Create or update a high-signal action checklist
-11. Update the monthly log, thread notes, and checkpoint state
-12. Propose any edits to user-owned notes before making them
+12. Create a slim retro receipt
+13. Create or update a high-signal action checklist
+14. Update the monthly log, thread notes, and checkpoint state
+15. Propose any edits to user-owned notes before making them
+
+## Duplicate Handling
+
+Duplicates are possible in two ways:
+
+- exact duplicate: the same stable `capture_id` already appears in the ledger
+- semantic duplicate: the same task or idea already appears in an existing action checklist or durable destination note
+
+Rules:
+
+- Never route an exact duplicate.
+- For semantic duplicates, do not add a second action. Link to the existing action or note in the retro receipt if useful.
+- If a repeated thought adds new detail, strengthen the existing durable note rather than creating another action.
+- If unsure whether something is duplicate or new, add it to clarifying questions instead of silently routing it.
 
 ## Output Shape
 
@@ -171,6 +195,8 @@ Include only:
 - review window
 - daily notes with non-empty marked braindumps
 - routing summary: destination notes and action checklist
+- skipped duplicate summary when applicable
+- clarifying questions when any capture was ambiguous
 - explicit statement when user-owned notes were not modified
 
 Do not include long reasoning, long raw captures, thread essays, or broad synthesis in the retro receipt. Put durable detail where it belongs:
@@ -185,6 +211,7 @@ The action checklist is the main user-facing output. Keep it short, high signal,
 - one checkbox per action
 - link the relevant destination note when useful
 - avoid explanation unless needed to make the action executable
+- include a `Clarifying Questions` section when captures were ambiguous or when routing required an assumption
 
 ## Thread Notes
 
@@ -217,15 +244,19 @@ Use one JSON object per line in the monthly log. Example fields:
 
 The ledger is state, not prompt context. Do not load the full history by default.
 
+Use `question` when a capture is understandable but the correct routing decision is unclear, such as whether to create a new durable note or update an existing workflow. Record the item in the current action checklist's clarifying questions section so it is not silently lost.
+
 ## Retrieval Rules
 
 To keep context small:
 
 1. Load daily note captures only for the active review window
 2. Load only the monthly ledger files that overlap the window
-3. Load the active thread index
-4. Load only likely-matching thread notes
-5. Load older retro summaries only when needed for a specific thread
+3. Build a set of already-ledgered `capture_id` values and skip exact duplicates
+4. Load current and recent action checklists to catch semantic duplicates before creating new actions
+5. Load the active thread index
+6. Load only likely-matching thread notes
+7. Load older retro summaries only when needed for a specific thread
 
 The main memory surfaces should be:
 
