@@ -1,0 +1,50 @@
+[settings]
+# Use a durable state directory on the machine that runs cron.
+state_dir = "/home/ben/.local/state/skill-cron"
+max_jobs_per_tick = 3
+
+[commands.kobo_daily_reader]
+argv = ["/home/ben/venvs/kobo/bin/python", "/home/ben/.claude/skills/kobo-epub-pipeline/kobo_daily_reader.py", "--count", "1"]
+timeout_seconds = 2700
+
+[commands.youtube_podcast_generator]
+argv = ["/usr/bin/python3", "/home/ben/.claude/skills/youtube-podcast-generator/youtube_research_podcast.py", "--feed", "/home/ben/.claude/skills/youtube-podcast-generator/youtube_feed.md"]
+timeout_seconds = 3600
+
+[commands.changedetection_review]
+# Placeholder for a future deterministic changedetection.io API review handler.
+argv = ["/usr/bin/python3", "/home/ben/bin/changedetection_review.py"]
+timeout_seconds = 300
+
+[commands.braindump_retro]
+# Disabled in the example until unattended agentic behavior is explicit.
+argv = ["/usr/local/bin/claude", "--print", "Run the obsidian-braindump-retro skill"]
+timeout_seconds = 1800
+
+[[jobs]]
+id = "kobo-epub"
+title = "Kobo Deep Dive EPUB"
+enabled = true
+command_id = "kobo_daily_reader"
+schedule = { weekly = "mon,thu 05:00" }
+
+[[jobs]]
+id = "youtube-podcasts"
+title = "YouTube NotebookLM Podcasts"
+enabled = true
+command_id = "youtube_podcast_generator"
+schedule = { daily_at = "06:30" }
+
+[[jobs]]
+id = "changedetection-review"
+title = "changedetection.io Review"
+enabled = false
+command_id = "changedetection_review"
+schedule = { every = "15m" }
+
+[[jobs]]
+id = "braindump-retro"
+title = "Braindump Retro"
+enabled = false
+command_id = "braindump_retro"
+schedule = { weekly = "sun 18:00" }

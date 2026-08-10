@@ -1,0 +1,111 @@
+---
+name: skill-scheduler
+description: Run a single cron-invoked scheduler that dispatches recurring Claude skills, scripts, and deterministic handlers from local TOML config. Use when the user wants to consolidate cron jobs, schedule existing skills such as Kobo EPUB or YouTube podcast generation, add recurring agentic workflows, inspect scheduler state, or debug scheduled skill execution.
+allowed-tools: Bash(python3 *), Bash(flock *), Bash(timeout *), Bash(claude *), Bash(codex *), Bash(git *)
+---
+
+# Skill Scheduler
+
+Use this skill to consolidate recurring automation behind one cron entry while keeping scheduling, locking, retry, and state handling deterministic.
+
+The scheduler is deliberately decoupled from Obsidian. Its default config lives next to the skill, and its runtime state lives in a local state directory configured in `skill_cron.toml`.
+
+## What This Skill Includes
+
+- `skill_cron.py` - deterministic scheduler CLI.
+- `skill_cron.example.toml` - starter config with examples for Kobo EPUBs, YouTube podcasts, changedetection review, and agentic skills.
+- `README.md` - quick-start and config reference.
+
+## Core Model
+
+```text
+cron -> skill_cron.py tick -> due job decision -> registered command argv
+```
+
+The LLM should not recalculate schedules every few minutes. The Python runner decides whether a job is due. Skills, scripts, or agents do the actual work only after the runner selects a due job.
+
+## Setup
+
+1. Copy the example config:
+
+```bash
+cp <skill-dir>/skill_cron.example.toml <skill-dir>/skill_cron.toml
+```
+
+2. Edit `skill_cron.toml`:
+
+- Set `settings.state_dir` to a durable local directory on the machine that runs cron.
+- Add one `commands.<id>.argv` entry per allowed script or skill invocation.
+- Add one `[[jobs]]` entry per scheduled recurring workflow.
+- Keep commands as argv arrays. Do not use shell strings for routine automation.
+
+3. Test the config:
+
+```bash
+python3 <skill-dir>/skill_cron.py doctor --config <skill-dir>/skill_cron.toml
+python3 <skill-dir>/skill_cron.py list --config <skill-dir>/skill_cron.toml
+python3 <skill-dir>/skill_cron.py tick --dry-run --config <skill-dir>/skill_cron.toml
+```
+
+4. Add one cron entry:
+
+```cron
+*/15 * * * * /usr/bin/python3 /path/to/skill-scheduler/skill_cron.py tick --config /path/to/skill-scheduler/skill_cron.toml >> /path/to/logs/skill_cron.log 2>&1
+```
+
+## Supported Schedules
+
+Use one of these schedule shapes per job:
+
+```toml
+schedule = { every = "15m" }
+schedule = { every = "1h" }
+schedule = { daily_at = "05:00" }
+schedule = { weekly = "mon,thu 05:00" }
+```
+
+Intervals support `s`, `m`, `h`, and `d` units.
+
+## Operating Commands
+
+```bash
+# Show config, command, and state health
+python3 skill_cron.py doctor
+
+# List jobs and due status
+python3 skill_cron.py list
+
+# Run due jobs
+python3 skill_cron.py tick
+
+# Preview due jobs without executing
+python3 skill_cron.py tick --dry-run
+
+# Force one job by id
+python3 skill_cron.py run kobo-epub
+```
+
+## Safety Rules
+
+- Prefer deterministic script handlers for frequent or expensive jobs.
+- Keep high-frequency website polling in changedetection unless a dedicated cache skill is intentionally added.
+- Use `agent-skill` jobs sparingly; they should usually be checkpoint-driven or run on slow cadences.
+- Do not put secrets in `skill_cron.toml`. Reference authenticated local CLIs or environment already configured for the cron user.
+- Do not use shell pipelines or compound shell strings. Register explicit argv arrays instead.
+- Use per-job `timeout_seconds` so stuck jobs cannot block later ticks indefinitely.
+
+## First Jobs To Migrate
+
+- Kobo EPUB generation: command points at `kobo-epub-pipeline/kobo_daily_reader.py`.
+- YouTube podcast generation: command points at `youtube-podcast-generator/youtube_research_podcast.py`.
+- changedetection review: command should call a small future handler that reads changedetection.io API changes and applies local dedupe/cache rules.
+- Braindump retro or other agentic reviews: start disabled until the desired unattended behavior is explicit.
+
+## Troubleshooting
+
+- `Config file not found`: copy `skill_cron.example.toml` to `skill_cron.toml` or pass `--config`.
+- `tomllib is unavailable`: run with Python 3.11 or newer.
+- `Unknown command_id`: add a matching `[commands.<id>]` table.
+- Job never runs: check `enabled`, schedule syntax, and `list` output.
+- Job overlaps: verify `settings.state_dir` is stable and writable so lock files persist between invocations.
+- Cron cannot find binaries: use absolute paths in `commands.<id>.argv`.

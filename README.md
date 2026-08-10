@@ -13,6 +13,7 @@ A collection of reusable [Claude Code](https://docs.anthropic.com/en/docs/claude
 | [mermaid-to-png](skills/mermaid-to-png/) | Saves a Mermaid diagram as a PNG image |
 | [pr-monitor](skills/pr-monitor/) | Autonomously monitor a GitHub PR — fix failing CI, process Copilot review feedback, push, repeat until green and clean |
 | [promote-permissions](skills/promote-permissions/) | Find permissions Claude requested during a session and offer to add them permanently |
+| [skill-scheduler](skills/skill-scheduler/) | Run one cron-invoked scheduler that dispatches recurring skills and scripts from local config |
 | [todoist](skills/todoist/) | Manage Todoist tasks via the CLI |
 | [youtube-podcast-generator](skills/youtube-podcast-generator/) | Generate NotebookLM audio podcasts from curated YouTube channels |
 

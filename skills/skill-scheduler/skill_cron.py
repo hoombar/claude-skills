@@ -1,0 +1,490 @@
+#!/usr/bin/env python3
+"""Deterministic scheduler for recurring skill and script jobs."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime as dt
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python <3.11 guard
+    tomllib = None  # type: ignore[assignment]
+
+
+WEEKDAYS = {
+    "mon": 0,
+    "monday": 0,
+    "tue": 1,
+    "tues": 1,
+    "tuesday": 1,
+    "wed": 2,
+    "wednesday": 2,
+    "thu": 3,
+    "thur": 3,
+    "thurs": 3,
+    "thursday": 3,
+    "fri": 4,
+    "friday": 4,
+    "sat": 5,
+    "saturday": 5,
+    "sun": 6,
+    "sunday": 6,
+}
+
+
+class ConfigError(Exception):
+    pass
+
+
+class LockHeld(Exception):
+    pass
+
+
+def now_local() -> dt.datetime:
+    return dt.datetime.now().astimezone()
+
+
+def parse_iso(value: str | None) -> dt.datetime | None:
+    if not value:
+        return None
+    try:
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
+        parsed = dt.datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def iso(value: dt.datetime) -> str:
+    return value.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def parse_duration(value: str) -> dt.timedelta:
+    match = re.fullmatch(r"\s*(\d+)\s*([smhd])\s*", value.lower())
+    if not match:
+        raise ConfigError(f"Invalid interval {value!r}; use values like 15m, 1h, or 2d")
+    amount = int(match.group(1))
+    unit = match.group(2)
+    if amount <= 0:
+        raise ConfigError("Intervals must be positive")
+    return {
+        "s": dt.timedelta(seconds=amount),
+        "m": dt.timedelta(minutes=amount),
+        "h": dt.timedelta(hours=amount),
+        "d": dt.timedelta(days=amount),
+    }[unit]
+
+
+def parse_time(value: str) -> dt.time:
+    try:
+        hour, minute = value.split(":", 1)
+        parsed = dt.time(int(hour), int(minute))
+    except ValueError as exc:
+        raise ConfigError(f"Invalid time {value!r}; use HH:MM in the cron host timezone") from exc
+    if not (0 <= parsed.hour <= 23 and 0 <= parsed.minute <= 59):
+        raise ConfigError(f"Invalid time {value!r}; use HH:MM")
+    return parsed
+
+
+def load_config(path: Path) -> dict[str, Any]:
+    if tomllib is None:
+        raise ConfigError("tomllib is unavailable; run with Python 3.11 or newer")
+    if not path.exists():
+        raise ConfigError(f"Config file not found: {path}")
+    with path.open("rb") as handle:
+        config = tomllib.load(handle)
+    validate_config(config)
+    return config
+
+
+def validate_config(config: dict[str, Any]) -> None:
+    settings = config.get("settings", {})
+    if not isinstance(settings, dict):
+        raise ConfigError("[settings] must be a TOML table")
+    if "state_dir" not in settings:
+        raise ConfigError("settings.state_dir is required")
+    commands = config.get("commands", {})
+    if not isinstance(commands, dict) or not commands:
+        raise ConfigError("At least one [commands.<id>] table is required")
+    for command_id, command in commands.items():
+        if not isinstance(command, dict):
+            raise ConfigError(f"commands.{command_id} must be a table")
+        argv = command.get("argv")
+        if not isinstance(argv, list) or not argv or not all(isinstance(item, str) and item for item in argv):
+            raise ConfigError(f"commands.{command_id}.argv must be a non-empty string array")
+        timeout = command.get("timeout_seconds", 3600)
+        if not isinstance(timeout, int) or timeout <= 0:
+            raise ConfigError(f"commands.{command_id}.timeout_seconds must be a positive integer")
+    jobs = config.get("jobs", [])
+    if not isinstance(jobs, list):
+        raise ConfigError("[[jobs]] entries are required")
+    seen_ids: set[str] = set()
+    for job in jobs:
+        validate_job(job, commands, seen_ids)
+
+
+def validate_job(job: Any, commands: dict[str, Any], seen_ids: set[str]) -> None:
+    if not isinstance(job, dict):
+        raise ConfigError("Each [[jobs]] entry must be a table")
+    job_id = job.get("id")
+    if not isinstance(job_id, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]+", job_id):
+        raise ConfigError("Each job id must contain only letters, numbers, dots, underscores, and hyphens")
+    if job_id in seen_ids:
+        raise ConfigError(f"Duplicate job id: {job_id}")
+    seen_ids.add(job_id)
+    command_id = job.get("command_id")
+    if command_id not in commands:
+        raise ConfigError(f"Job {job_id} references unknown command_id {command_id!r}")
+    schedule = job.get("schedule")
+    if not isinstance(schedule, dict):
+        raise ConfigError(f"Job {job_id} requires schedule table")
+    keys = {key for key in schedule if key in {"every", "daily_at", "weekly"}}
+    if len(keys) != 1:
+        raise ConfigError(f"Job {job_id} schedule must contain exactly one of every, daily_at, weekly")
+    if "every" in schedule:
+        parse_duration(str(schedule["every"]))
+    if "daily_at" in schedule:
+        parse_time(str(schedule["daily_at"]))
+    if "weekly" in schedule:
+        parse_weekly(str(schedule["weekly"]))
+
+
+def state_dir(config: dict[str, Any], config_path: Path) -> Path:
+    raw = str(config["settings"]["state_dir"])
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = config_path.parent / path
+    return path
+
+
+def load_state(path: Path) -> dict[str, Any]:
+    state_path = path / "state.json"
+    if not state_path.exists():
+        return {"jobs": {}}
+    try:
+        with state_path.open("r", encoding="utf-8") as handle:
+            state = json.load(handle)
+    except json.JSONDecodeError:
+        return {"jobs": {}}
+    if not isinstance(state, dict):
+        return {"jobs": {}}
+    state.setdefault("jobs", {})
+    return state
+
+
+def save_state(path: Path, state: dict[str, Any]) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    tmp = path / "state.json.tmp"
+    final = path / "state.json"
+    with tmp.open("w", encoding="utf-8") as handle:
+        json.dump(state, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    tmp.replace(final)
+
+
+def append_log(path: Path, record: dict[str, Any]) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    with (path / "runs.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+@contextlib.contextmanager
+def lock(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise LockHeld(str(path)) from exc
+    try:
+        os.write(fd, str(os.getpid()).encode("utf-8"))
+        yield
+    finally:
+        os.close(fd)
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+
+
+def parse_weekly(value: str) -> tuple[list[int], dt.time]:
+    parts = value.strip().split()
+    if len(parts) != 2:
+        raise ConfigError(f"Invalid weekly schedule {value!r}; use 'mon,thu 05:00'")
+    day_tokens = [item.strip().lower() for item in parts[0].split(",") if item.strip()]
+    if not day_tokens:
+        raise ConfigError(f"Invalid weekly schedule {value!r}; no weekdays found")
+    days: list[int] = []
+    for token in day_tokens:
+        if token not in WEEKDAYS:
+            raise ConfigError(f"Invalid weekday {token!r} in weekly schedule {value!r}")
+        days.append(WEEKDAYS[token])
+    return sorted(set(days)), parse_time(parts[1])
+
+
+def previous_daily_occurrence(now: dt.datetime, when: dt.time) -> dt.datetime:
+    candidate = dt.datetime.combine(now.date(), when, tzinfo=now.tzinfo)
+    if candidate > now:
+        candidate -= dt.timedelta(days=1)
+    return candidate
+
+
+def previous_weekly_occurrence(now: dt.datetime, days: list[int], when: dt.time) -> dt.datetime:
+    candidates: list[dt.datetime] = []
+    for day in days:
+        days_back = (now.weekday() - day) % 7
+        candidate_date = now.date() - dt.timedelta(days=days_back)
+        candidate = dt.datetime.combine(candidate_date, when, tzinfo=now.tzinfo)
+        if candidate <= now:
+            candidates.append(candidate)
+        else:
+            candidates.append(candidate - dt.timedelta(days=7))
+    return max(candidates)
+
+
+def is_due(job: dict[str, Any], job_state: dict[str, Any], now: dt.datetime) -> tuple[bool, str]:
+    if job.get("enabled") is False:
+        return False, "disabled"
+    schedule = job["schedule"]
+    last_attempt = parse_iso(job_state.get("last_attempt_at"))
+    if "every" in schedule:
+        interval = parse_duration(str(schedule["every"]))
+        if last_attempt is None:
+            return True, "never-run"
+        due_at = last_attempt + interval
+        return now >= due_at, f"next-at {iso(due_at)}"
+    if "daily_at" in schedule:
+        previous = previous_daily_occurrence(now, parse_time(str(schedule["daily_at"])))
+        return last_attempt is None or last_attempt < previous, f"slot {iso(previous)}"
+    days, when = parse_weekly(str(schedule["weekly"]))
+    previous = previous_weekly_occurrence(now, days, when)
+    return last_attempt is None or last_attempt < previous, f"slot {iso(previous)}"
+
+
+def command_for_job(config: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    return config["commands"][job["command_id"]]
+
+
+def run_job(
+    config: dict[str, Any],
+    job: dict[str, Any],
+    state: dict[str, Any],
+    state_path: Path,
+    dry_run: bool,
+) -> int:
+    job_id = job["id"]
+    command = command_for_job(config, job)
+    now = now_local()
+    job_state = state.setdefault("jobs", {}).setdefault(job_id, {})
+    if dry_run:
+        print(f"DRY RUN {job_id}: {' '.join(command['argv'])}")
+        return 0
+    lock_path = state_path / "locks" / f"{job_id}.lock"
+    try:
+        with lock(lock_path):
+            job_state["last_attempt_at"] = iso(now)
+            job_state["last_status"] = "running"
+            save_state(state_path, state)
+            started = now_local()
+            result = subprocess.run(
+                command["argv"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=int(command.get("timeout_seconds", 3600)),
+                check=False,
+            )
+            finished = now_local()
+            status = "success" if result.returncode == 0 else "failed"
+            job_state["last_finished_at"] = iso(finished)
+            job_state["last_status"] = status
+            job_state["last_returncode"] = result.returncode
+            if status == "success":
+                job_state["last_success_at"] = iso(finished)
+                job_state["failure_count"] = 0
+            else:
+                job_state["failure_count"] = int(job_state.get("failure_count", 0)) + 1
+            record = {
+                "job_id": job_id,
+                "title": job.get("title", job_id),
+                "command_id": job["command_id"],
+                "started_at": iso(started),
+                "finished_at": iso(finished),
+                "status": status,
+                "returncode": result.returncode,
+                "stdout_tail": result.stdout[-4000:],
+                "stderr_tail": result.stderr[-4000:],
+            }
+            append_log(state_path, record)
+            save_state(state_path, state)
+            print(f"{status.upper()} {job_id} rc={result.returncode}")
+            return result.returncode
+    except LockHeld:
+        print(f"SKIP {job_id}: lock held")
+        return 0
+    except subprocess.TimeoutExpired as exc:
+        finished = now_local()
+        job_state["last_finished_at"] = iso(finished)
+        job_state["last_status"] = "timeout"
+        job_state["failure_count"] = int(job_state.get("failure_count", 0)) + 1
+        append_log(
+            state_path,
+            {
+                "job_id": job_id,
+                "title": job.get("title", job_id),
+                "command_id": job["command_id"],
+                "started_at": iso(now),
+                "finished_at": iso(finished),
+                "status": "timeout",
+                "timeout_seconds": command.get("timeout_seconds", 3600),
+                "stdout_tail": (exc.stdout or "")[-4000:] if isinstance(exc.stdout, str) else "",
+                "stderr_tail": (exc.stderr or "")[-4000:] if isinstance(exc.stderr, str) else "",
+            },
+        )
+        save_state(state_path, state)
+        print(f"TIMEOUT {job_id}")
+        return 124
+    except OSError as exc:
+        finished = now_local()
+        job_state["last_finished_at"] = iso(finished)
+        job_state["last_status"] = "failed"
+        job_state["last_returncode"] = 127
+        job_state["failure_count"] = int(job_state.get("failure_count", 0)) + 1
+        append_log(
+            state_path,
+            {
+                "job_id": job_id,
+                "title": job.get("title", job_id),
+                "command_id": job["command_id"],
+                "started_at": iso(now),
+                "finished_at": iso(finished),
+                "status": "failed",
+                "returncode": 127,
+                "stderr_tail": str(exc),
+            },
+        )
+        save_state(state_path, state)
+        print(f"FAILED {job_id} rc=127")
+        return 127
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    config_path = Path(args.config).expanduser().resolve()
+    config = load_config(config_path)
+    path = state_dir(config, config_path)
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "locks").mkdir(parents=True, exist_ok=True)
+    print(f"config: {config_path}")
+    print(f"state_dir: {path}")
+    print(f"commands: {len(config.get('commands', {}))}")
+    print(f"jobs: {len(config.get('jobs', []))}")
+    print("ok")
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    config_path = Path(args.config).expanduser().resolve()
+    config = load_config(config_path)
+    path = state_dir(config, config_path)
+    state = load_state(path)
+    now = now_local()
+    for job in config.get("jobs", []):
+        job_state = state.get("jobs", {}).get(job["id"], {})
+        due, reason = is_due(job, job_state, now)
+        status = job_state.get("last_status", "never-run")
+        enabled = "enabled" if job.get("enabled") is not False else "disabled"
+        marker = "due" if due else "not-due"
+        print(f"{job['id']}\t{enabled}\t{marker}\t{status}\t{reason}")
+    return 0
+
+
+def cmd_tick(args: argparse.Namespace) -> int:
+    config_path = Path(args.config).expanduser().resolve()
+    config = load_config(config_path)
+    path = state_dir(config, config_path)
+    state = load_state(path)
+    max_jobs = int(config.get("settings", {}).get("max_jobs_per_tick", 9999))
+    ran = 0
+    rc = 0
+    try:
+        with lock(path / "locks" / "scheduler.lock"):
+            now = now_local()
+            for job in config.get("jobs", []):
+                if ran >= max_jobs:
+                    break
+                job_state = state.get("jobs", {}).get(job["id"], {})
+                due, reason = is_due(job, job_state, now)
+                if not due:
+                    continue
+                print(f"DUE {job['id']}: {reason}")
+                job_rc = run_job(config, job, state, path, args.dry_run)
+                ran += 1
+                if job_rc != 0 and rc == 0:
+                    rc = job_rc
+    except LockHeld:
+        print("SKIP scheduler: lock held")
+        return 0
+    print(f"tick complete: {ran} job(s) selected")
+    return rc
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    config_path = Path(args.config).expanduser().resolve()
+    config = load_config(config_path)
+    path = state_dir(config, config_path)
+    state = load_state(path)
+    for job in config.get("jobs", []):
+        if job["id"] == args.job_id:
+            return run_job(config, job, state, path, args.dry_run)
+    raise ConfigError(f"Unknown job id: {args.job_id}")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    default_config = Path(__file__).with_name("skill_cron.toml")
+    parser = argparse.ArgumentParser(description="Run recurring skill and script jobs from TOML config")
+    parser.add_argument("--config", default=str(default_config), help="Path to skill_cron.toml")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    doctor = subparsers.add_parser("doctor", help="Validate config and state directory")
+    doctor.add_argument("--config", default=argparse.SUPPRESS, help="Path to skill_cron.toml")
+    doctor.set_defaults(func=cmd_doctor)
+
+    list_parser = subparsers.add_parser("list", help="List jobs and due status")
+    list_parser.add_argument("--config", default=argparse.SUPPRESS, help="Path to skill_cron.toml")
+    list_parser.set_defaults(func=cmd_list)
+
+    tick = subparsers.add_parser("tick", help="Run all due jobs")
+    tick.add_argument("--config", default=argparse.SUPPRESS, help="Path to skill_cron.toml")
+    tick.add_argument("--dry-run", action="store_true", help="Print selected jobs without executing")
+    tick.set_defaults(func=cmd_tick)
+
+    run = subparsers.add_parser("run", help="Force one job by id")
+    run.add_argument("job_id")
+    run.add_argument("--config", default=argparse.SUPPRESS, help="Path to skill_cron.toml")
+    run.add_argument("--dry-run", action="store_true", help="Print command without executing")
+    run.set_defaults(func=cmd_run)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return int(args.func(args))
+    except ConfigError as exc:
+        print(f"CONFIG ERROR: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
