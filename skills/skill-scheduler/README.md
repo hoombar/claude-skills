@@ -73,8 +73,7 @@ The runner writes these files under `settings.state_dir`:
 
 - Scheduling and locking are deterministic Python, not LLM reasoning.
 - Jobs dispatch to explicit argv arrays, never shell strings.
-- The scheduler is not coupled to Obsidian or any vault path.
 - Agentic skills should usually be slow-cadence and checkpoint-driven.
-- High-frequency website polling should usually stay in changedetection.io, with a scheduler job reviewing or routing changes.
+- High-frequency jobs should usually run cheap deterministic handlers that exit quickly when there is no new work.
 
 See [`SKILL.md`](SKILL.md) for operational guidance.

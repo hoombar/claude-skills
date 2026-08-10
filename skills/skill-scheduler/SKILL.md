@@ -8,12 +8,12 @@ allowed-tools: Bash(python3 *), Bash(flock *), Bash(timeout *), Bash(claude *), 
 
 Use this skill to consolidate recurring automation behind one cron entry while keeping scheduling, locking, retry, and state handling deterministic.
 
-The scheduler is deliberately decoupled from Obsidian. Its default config lives next to the skill, and its runtime state lives in a local state directory configured in `skill_cron.toml`.
+The scheduler's default config lives next to the skill, and its runtime state lives in a local state directory configured in `skill_cron.toml`.
 
 ## What This Skill Includes
 
 - `skill_cron.py` - deterministic scheduler CLI.
-- `skill_cron.example.toml` - starter config with examples for Kobo EPUBs, YouTube podcasts, changedetection review, and agentic skills.
+- `skill_cron.example.toml` - starter config with examples for Kobo EPUBs, YouTube podcasts, maintenance checks, and agentic skills.
 - `README.md` - quick-start and config reference.
 
 ## Core Model
@@ -88,7 +88,6 @@ python3 skill_cron.py run kobo-epub
 ## Safety Rules
 
 - Prefer deterministic script handlers for frequent or expensive jobs.
-- Keep high-frequency website polling in changedetection unless a dedicated cache skill is intentionally added.
 - Use `agent-skill` jobs sparingly; they should usually be checkpoint-driven or run on slow cadences.
 - Do not put secrets in `skill_cron.toml`. Reference authenticated local CLIs or environment already configured for the cron user.
 - Do not use shell pipelines or compound shell strings. Register explicit argv arrays instead.
@@ -98,8 +97,8 @@ python3 skill_cron.py run kobo-epub
 
 - Kobo EPUB generation: command points at `kobo-epub-pipeline/kobo_daily_reader.py`.
 - YouTube podcast generation: command points at `youtube-podcast-generator/youtube_research_podcast.py`.
-- changedetection review: command should call a small future handler that reads changedetection.io API changes and applies local dedupe/cache rules.
-- Braindump retro or other agentic reviews: start disabled until the desired unattended behavior is explicit.
+- Maintenance checks: command should call a deterministic handler that exits quickly when there is no new work.
+- Agentic reviews: start disabled until the desired unattended behavior is explicit.
 
 ## Troubleshooting
 

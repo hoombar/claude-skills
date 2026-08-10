@@ -11,14 +11,14 @@ timeout_seconds = 2700
 argv = ["/usr/bin/python3", "/home/ben/.claude/skills/youtube-podcast-generator/youtube_research_podcast.py", "--feed", "/home/ben/.claude/skills/youtube-podcast-generator/youtube_feed.md"]
 timeout_seconds = 3600
 
-[commands.changedetection_review]
-# Placeholder for a future deterministic changedetection.io API review handler.
-argv = ["/usr/bin/python3", "/home/ben/bin/changedetection_review.py"]
+[commands.maintenance_check]
+# Placeholder for a future deterministic maintenance check handler.
+argv = ["/usr/bin/python3", "/home/ben/bin/maintenance_check.py"]
 timeout_seconds = 300
 
-[commands.braindump_retro]
+[commands.weekly_review]
 # Disabled in the example until unattended agentic behavior is explicit.
-argv = ["/usr/local/bin/claude", "--print", "Run the obsidian-braindump-retro skill"]
+argv = ["/usr/local/bin/claude", "--print", "Run the weekly review skill"]
 timeout_seconds = 1800
 
 [[jobs]]
@@ -36,15 +36,15 @@ command_id = "youtube_podcast_generator"
 schedule = { daily_at = "06:30" }
 
 [[jobs]]
-id = "changedetection-review"
-title = "changedetection.io Review"
+id = "maintenance-check"
+title = "Maintenance Check"
 enabled = false
-command_id = "changedetection_review"
+command_id = "maintenance_check"
 schedule = { every = "15m" }
 
 [[jobs]]
-id = "braindump-retro"
-title = "Braindump Retro"
+id = "weekly-review"
+title = "Weekly Review"
 enabled = false
-command_id = "braindump_retro"
+command_id = "weekly_review"
 schedule = { weekly = "sun 18:00" }
