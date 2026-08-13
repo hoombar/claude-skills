@@ -6,6 +6,7 @@ max_jobs_per_tick = 3
 [commands.kobo_daily_reader]
 argv = ["/home/ben/venvs/kobo/bin/python", "/home/ben/.claude/skills/kobo-epub-pipeline/kobo_daily_reader.py", "--count", "1"]
 timeout_seconds = 2700
+log_path = "/home/ben/logs/kobo_daily_reader.log"
 
 [commands.youtube_podcast_generator]
 argv = ["/usr/bin/python3", "/home/ben/.claude/skills/youtube-podcast-generator/youtube_research_podcast.py", "--feed", "/home/ben/.claude/skills/youtube-podcast-generator/youtube_feed.md"]

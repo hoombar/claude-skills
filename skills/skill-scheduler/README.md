@@ -15,7 +15,7 @@ python3 skill_cron.py tick --dry-run
 Add one cron entry on the host that should run the jobs:
 
 ```cron
-*/15 * * * * /usr/bin/python3 /path/to/skill-scheduler/skill_cron.py tick --config /path/to/skill-scheduler/skill_cron.toml >> /path/to/logs/skill_cron.log 2>&1
+* * * * * /usr/bin/python3 /path/to/skill-scheduler/skill_cron.py tick --quiet --config /path/to/skill-scheduler/skill_cron.toml >> /path/to/logs/skill_cron.log 2>&1
 ```
 
 ## Config Model
@@ -30,6 +30,7 @@ max_jobs_per_tick = 3
 [commands.example]
 argv = ["/usr/bin/python3", "/path/to/script.py", "--count", "1"]
 timeout_seconds = 2700
+log_path = "/path/to/logs/example.log"
 
 [[jobs]]
 id = "example-job"
@@ -56,6 +57,7 @@ python3 skill_cron.py doctor
 python3 skill_cron.py list
 python3 skill_cron.py tick
 python3 skill_cron.py tick --dry-run
+python3 skill_cron.py tick --quiet
 python3 skill_cron.py run <job-id>
 python3 skill_cron.py run <job-id> --dry-run
 ```

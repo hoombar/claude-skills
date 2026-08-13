@@ -127,6 +127,9 @@ def validate_config(config: dict[str, Any]) -> None:
         timeout = command.get("timeout_seconds", 3600)
         if not isinstance(timeout, int) or timeout <= 0:
             raise ConfigError(f"commands.{command_id}.timeout_seconds must be a positive integer")
+        log_path = command.get("log_path")
+        if log_path is not None and not isinstance(log_path, str):
+            raise ConfigError(f"commands.{command_id}.log_path must be a string when set")
     jobs = config.get("jobs", [])
     if not isinstance(jobs, list):
         raise ConfigError("[[jobs]] entries are required")
@@ -198,6 +201,32 @@ def append_log(path: Path, record: dict[str, Any]) -> None:
     path.mkdir(parents=True, exist_ok=True)
     with (path / "runs.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def append_command_log(command: dict[str, Any], record: dict[str, Any]) -> None:
+    raw_log_path = command.get("log_path")
+    if not raw_log_path:
+        return
+    log_path = Path(str(raw_log_path)).expanduser()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(f"\n=== {record['job_id']} {record['status']} {record['started_at']} -> {record['finished_at']} ===\n")
+        if "returncode" in record:
+            handle.write(f"returncode: {record['returncode']}\n")
+        if "timeout_seconds" in record:
+            handle.write(f"timeout_seconds: {record['timeout_seconds']}\n")
+        stdout = record.get("stdout_for_log", "")
+        stderr = record.get("stderr_for_log", "")
+        if stdout:
+            handle.write("--- stdout ---\n")
+            handle.write(stdout)
+            if not stdout.endswith("\n"):
+                handle.write("\n")
+        if stderr:
+            handle.write("--- stderr ---\n")
+            handle.write(stderr)
+            if not stderr.endswith("\n"):
+                handle.write("\n")
 
 
 @contextlib.contextmanager
@@ -321,9 +350,14 @@ def run_job(
                 "finished_at": iso(finished),
                 "status": status,
                 "returncode": result.returncode,
+                "stdout_for_log": result.stdout,
+                "stderr_for_log": result.stderr,
                 "stdout_tail": result.stdout[-4000:],
                 "stderr_tail": result.stderr[-4000:],
             }
+            append_command_log(command, record)
+            record.pop("stdout_for_log", None)
+            record.pop("stderr_for_log", None)
             append_log(state_path, record)
             save_state(state_path, state)
             print(f"{status.upper()} {job_id} rc={result.returncode}")
@@ -336,20 +370,23 @@ def run_job(
         job_state["last_finished_at"] = iso(finished)
         job_state["last_status"] = "timeout"
         job_state["failure_count"] = int(job_state.get("failure_count", 0)) + 1
-        append_log(
-            state_path,
-            {
-                "job_id": job_id,
-                "title": job.get("title", job_id),
-                "command_id": job["command_id"],
-                "started_at": iso(now),
-                "finished_at": iso(finished),
-                "status": "timeout",
-                "timeout_seconds": command.get("timeout_seconds", 3600),
-                "stdout_tail": (exc.stdout or "")[-4000:] if isinstance(exc.stdout, str) else "",
-                "stderr_tail": (exc.stderr or "")[-4000:] if isinstance(exc.stderr, str) else "",
-            },
-        )
+        record = {
+            "job_id": job_id,
+            "title": job.get("title", job_id),
+            "command_id": job["command_id"],
+            "started_at": iso(now),
+            "finished_at": iso(finished),
+            "status": "timeout",
+            "timeout_seconds": command.get("timeout_seconds", 3600),
+            "stdout_for_log": exc.stdout or "" if isinstance(exc.stdout, str) else "",
+            "stderr_for_log": exc.stderr or "" if isinstance(exc.stderr, str) else "",
+            "stdout_tail": (exc.stdout or "")[-4000:] if isinstance(exc.stdout, str) else "",
+            "stderr_tail": (exc.stderr or "")[-4000:] if isinstance(exc.stderr, str) else "",
+        }
+        append_command_log(command, record)
+        record.pop("stdout_for_log", None)
+        record.pop("stderr_for_log", None)
+        append_log(state_path, record)
         save_state(state_path, state)
         print(f"TIMEOUT {job_id}")
         return 124
@@ -359,19 +396,22 @@ def run_job(
         job_state["last_status"] = "failed"
         job_state["last_returncode"] = 127
         job_state["failure_count"] = int(job_state.get("failure_count", 0)) + 1
-        append_log(
-            state_path,
-            {
-                "job_id": job_id,
-                "title": job.get("title", job_id),
-                "command_id": job["command_id"],
-                "started_at": iso(now),
-                "finished_at": iso(finished),
-                "status": "failed",
-                "returncode": 127,
-                "stderr_tail": str(exc),
-            },
-        )
+        record = {
+            "job_id": job_id,
+            "title": job.get("title", job_id),
+            "command_id": job["command_id"],
+            "started_at": iso(now),
+            "finished_at": iso(finished),
+            "status": "failed",
+            "returncode": 127,
+            "stdout_for_log": "",
+            "stderr_for_log": str(exc),
+            "stderr_tail": str(exc),
+        }
+        append_command_log(command, record)
+        record.pop("stdout_for_log", None)
+        record.pop("stderr_for_log", None)
+        append_log(state_path, record)
         save_state(state_path, state)
         print(f"FAILED {job_id} rc=127")
         return 127
@@ -431,9 +471,11 @@ def cmd_tick(args: argparse.Namespace) -> int:
                 if job_rc != 0 and rc == 0:
                     rc = job_rc
     except LockHeld:
-        print("SKIP scheduler: lock held")
+        if not args.quiet:
+            print("SKIP scheduler: lock held")
         return 0
-    print(f"tick complete: {ran} job(s) selected")
+    if not args.quiet or ran > 0:
+        print(f"tick complete: {ran} job(s) selected")
     return rc
 
 
@@ -465,6 +507,7 @@ def build_parser() -> argparse.ArgumentParser:
     tick = subparsers.add_parser("tick", help="Run all due jobs")
     tick.add_argument("--config", default=argparse.SUPPRESS, help="Path to skill_cron.toml")
     tick.add_argument("--dry-run", action="store_true", help="Print selected jobs without executing")
+    tick.add_argument("--quiet", action="store_true", help="Suppress output when no jobs are selected")
     tick.set_defaults(func=cmd_tick)
 
     run = subparsers.add_parser("run", help="Force one job by id")

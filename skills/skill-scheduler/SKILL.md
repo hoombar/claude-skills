@@ -38,6 +38,7 @@ cp <skill-dir>/skill_cron.example.toml <skill-dir>/skill_cron.toml
 - Add one `commands.<id>.argv` entry per allowed script or skill invocation.
 - Add one `[[jobs]]` entry per scheduled recurring workflow.
 - Keep commands as argv arrays. Do not use shell strings for routine automation.
+- Set `commands.<id>.log_path` when a job should continue writing to an existing per-job log file.
 
 3. Test the config:
 
@@ -50,7 +51,7 @@ python3 <skill-dir>/skill_cron.py tick --dry-run --config <skill-dir>/skill_cron
 4. Add one cron entry:
 
 ```cron
-*/15 * * * * /usr/bin/python3 /path/to/skill-scheduler/skill_cron.py tick --config /path/to/skill-scheduler/skill_cron.toml >> /path/to/logs/skill_cron.log 2>&1
+* * * * * /usr/bin/python3 /path/to/skill-scheduler/skill_cron.py tick --quiet --config /path/to/skill-scheduler/skill_cron.toml >> /path/to/logs/skill_cron.log 2>&1
 ```
 
 ## Supported Schedules
@@ -80,6 +81,9 @@ python3 skill_cron.py tick
 
 # Preview due jobs without executing
 python3 skill_cron.py tick --dry-run
+
+# Suppress output when no jobs are selected
+python3 skill_cron.py tick --quiet
 
 # Force one job by id
 python3 skill_cron.py run kobo-epub
