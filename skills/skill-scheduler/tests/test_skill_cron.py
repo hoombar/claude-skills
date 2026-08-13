@@ -2,6 +2,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -22,9 +23,11 @@ class SkillCronResultTests(unittest.TestCase):
                 "title": "Changed title",
                 "message": "A change occurred",
                 "details": {"added": 1},
+                "click_url": "https://example.com/item",
             }))
             result = scheduler.read_command_result(path)
             self.assertEqual(result["event"], "changed")
+            self.assertEqual(result["click_url"], "https://example.com/item")
             self.assertFalse(path.exists())
 
     def test_rejects_unknown_result_event(self):
@@ -52,6 +55,37 @@ class SkillCronResultTests(unittest.TestCase):
                 set(),
                 {"known"},
             )
+
+    def test_ntfy_sets_click_and_view_action(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b""
+        with mock.patch.object(scheduler.urllib.request, "urlopen", return_value=response) as urlopen:
+            scheduler.send_ntfy_notification(
+                {"url": "https://ntfy.example", "topic": "alerts"},
+                "Title",
+                "Message",
+                "success",
+                "https://example.com/item",
+            )
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.headers["Click"], "https://example.com/item")
+        self.assertEqual(request.headers["Actions"], "view, Open page, https://example.com/item, clear=true")
+
+    def test_notification_summary_precedes_metadata(self):
+        title, message = scheduler.notification_payload(
+            {"title": "Example"},
+            {
+                "job_id": "site",
+                "status": "success",
+                "event": "changed",
+                "event_message": "Added: New comedian",
+                "click_url": "https://example.com/item",
+                "started_at": "start",
+                "finished_at": "finish",
+            },
+        )
+        self.assertEqual(title, "Skill Scheduler: Example changed")
+        self.assertTrue(message.startswith("Added: New comedian\n\nOpen: https://example.com/item"))
 
 
 if __name__ == "__main__":

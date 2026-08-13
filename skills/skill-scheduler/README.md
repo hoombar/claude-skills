@@ -104,10 +104,12 @@ Set `job_ids = ["job-a", "job-b"]` to limit a notification provider to specific 
 Commands can atomically write a versioned JSON object to the path in `SKILL_SCHEDULER_RESULT_FILE`:
 
 ```json
-{"schema_version":1,"event":"changed","title":"Listings changed","message":"One item was added","details":{"added":1}}
+{"schema_version":1,"event":"changed","title":"Listings changed","message":"One item was added","click_url":"https://example.com/items/new","details":{"added":1}}
 ```
 
 The result file is optional. Process exit status still determines execution success or failure.
+
+For ntfy providers, `click_url` sets the notification tap target and adds an explicit **Open page** action.
 
 ## Design Notes
 

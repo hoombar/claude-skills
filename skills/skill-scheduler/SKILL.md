@@ -113,6 +113,8 @@ Supported events are `success`, `failed`, `timeout`, `failure`, and `completion`
 
 Successful commands may report `initialized`, `unchanged`, `changed`, or `changed_suppressed` by writing versioned JSON to `SKILL_SCHEDULER_RESULT_FILE`. Use notification `job_ids` to scope providers to selected jobs.
 
+An optional absolute `click_url` in the result makes ntfy notifications tappable and adds an **Open page** action.
+
 ## Safety Rules
 
 - Prefer deterministic script handlers for frequent or expensive jobs.

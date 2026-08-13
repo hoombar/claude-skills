@@ -112,6 +112,22 @@ class WebsiteMonitorTests(unittest.TestCase):
             {"kind": "items", "added": [], "removed": [], "modified": []},
         )
 
+    def test_item_summary_and_click_url_use_single_added_item(self):
+        watched = self.item_monitor()
+        delta = {
+            "kind": "items",
+            "added": [{"title": "New comedian", "url": "https://example.com/events/new"}],
+            "removed": [],
+            "modified": [],
+        }
+        self.assertEqual(monitor.deterministic_summary(delta), "Listings changed: 1 added\nAdded: New comedian")
+        self.assertEqual(monitor.change_click_url(watched, delta), "https://example.com/events/new")
+
+    def test_click_url_falls_back_to_monitor_page(self):
+        watched = self.item_monitor()
+        delta = {"kind": "items", "added": [{"title": "A"}, {"title": "B"}], "removed": [], "modified": []}
+        self.assertEqual(monitor.change_click_url(watched, delta), watched["url"])
+
     def test_conflicting_duplicate_item_keys_fail(self):
         FixtureHandler.pages = {
             "/events": '<article><a href="/event/a"><h2>A</h2></a></article><nav><a href="/events/page-2">2</a></nav>',
@@ -155,7 +171,7 @@ class WebsiteMonitorTests(unittest.TestCase):
         previous = os.environ.get("SKILL_SCHEDULER_RESULT_FILE")
         os.environ["SKILL_SCHEDULER_RESULT_FILE"] = str(result_path)
         try:
-            monitor.write_result("changed", "Title", "Message", {"count": 1})
+            monitor.write_result("changed", "Title", "Message", {"count": 1}, "https://example.com/item")
         finally:
             if previous is None:
                 os.environ.pop("SKILL_SCHEDULER_RESULT_FILE", None)
@@ -164,6 +180,7 @@ class WebsiteMonitorTests(unittest.TestCase):
         value = json.loads(result_path.read_text())
         self.assertEqual(value["event"], "changed")
         self.assertEqual(value["details"], {"count": 1})
+        self.assertEqual(value["click_url"], "https://example.com/item")
 
     def test_scheduler_result_file_bounds_large_details(self):
         result_path = Path(self.temp.name) / "large-result.json"

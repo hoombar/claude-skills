@@ -14,6 +14,7 @@ Use `website_monitor.py` to fetch configured websites, extract canonical documen
 - Prefer static HTTP. Use the optional Playwright fetcher only when target content requires JavaScript rendering or interaction.
 - Prefer structured item extraction for listings. Stable item keys prevent reorder and pagination changes from generating false alerts.
 - Use deterministic relevance rules first. Invoke an evaluator only after a real delta and only when `semantic_intent` is configured.
+- Extract a public `url` field for listing items when possible. A single added item becomes the notification tap target; otherwise notifications open the monitor source URL.
 - Preview extraction before establishing a baseline.
 
 ## Commands

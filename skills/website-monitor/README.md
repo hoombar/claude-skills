@@ -54,6 +54,8 @@ optional = true
 
 Set `relevance.semantic_intent` to evaluate a real delta. The configured evaluator receives bounded JSON on stdin. It must return the schema in `relevance.schema.json`. The `{output_file}` placeholder supports CLIs that write their final response to a file.
 
+For item changes, notifications summarize added, removed, and modified listings. A single added item uses its extracted `url` as the notification tap target; otherwise the monitor source URL is used.
+
 ## State
 
 Each monitor stores a versioned `state.json` and append-only `history.jsonl` under `settings.state_dir`. Configuration changes rebaseline without alerting. Fetch or extraction failures never replace a valid baseline.

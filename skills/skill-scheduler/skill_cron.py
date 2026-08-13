@@ -321,18 +321,23 @@ def notification_payload(job: dict[str, Any], record: dict[str, Any]) -> tuple[s
     status = str(record["status"])
     outcome = str(record.get("event", status))
     notification_title = str(record.get("event_title") or f"Skill Scheduler: {title} {outcome}")
-    lines = [
+    lines: list[str] = []
+    if record.get("event_message"):
+        lines.append(str(record["event_message"]))
+    if record.get("click_url"):
+        lines.extend(["", f"Open: {record['click_url']}"])
+    if lines:
+        lines.append("")
+    lines.extend([
         f"Job: {record['job_id']}",
         f"Status: {status}",
         f"Started: {record['started_at']}",
         f"Finished: {record['finished_at']}",
-    ]
+    ])
     if "returncode" in record:
         lines.append(f"Return code: {record['returncode']}")
     if "timeout_seconds" in record:
         lines.append(f"Timeout: {record['timeout_seconds']} seconds")
-    if record.get("event_message"):
-        lines.extend(["", str(record["event_message"])])
     stderr_tail = str(record.get("stderr_tail", "")).strip()
     if stderr_tail:
         lines.append("")
@@ -340,7 +345,7 @@ def notification_payload(job: dict[str, Any], record: dict[str, Any]) -> tuple[s
     return notification_title, "\n".join(lines)
 
 
-def send_ntfy_notification(notification: dict[str, Any], title: str, message: str, status: str) -> None:
+def send_ntfy_notification(notification: dict[str, Any], title: str, message: str, status: str, click_url: str | None = None) -> None:
     base_url = str(notification["url"]).rstrip("/")
     topic = urllib.parse.quote(str(notification["topic"]).strip("/"), safe="")
     url = f"{base_url}/{topic}"
@@ -351,6 +356,9 @@ def send_ntfy_notification(notification: dict[str, Any], title: str, message: st
     tags = notification.get("tags", [])
     if tags:
         headers["Tags"] = ",".join(str(tag) for tag in tags)
+    if click_url:
+        headers["Click"] = click_url
+        headers["Actions"] = f"view, Open page, {click_url}, clear=true"
     token_env = notification.get("token_env")
     if token_env:
         token = os.environ.get(str(token_env))
@@ -387,7 +395,7 @@ def send_notifications(config: dict[str, Any], job: dict[str, Any], record: dict
         title, message = notification_payload(job, record)
         try:
             if notification["provider"] == "ntfy":
-                send_ntfy_notification(notification, title, message, str(record["status"]))
+                send_ntfy_notification(notification, title, message, str(record["status"]), record.get("click_url"))
             elif notification["provider"] == "webhook":
                 send_webhook_notification(notification, title, message, record)
         except (OSError, RuntimeError, urllib.error.URLError, TimeoutError) as exc:
@@ -409,17 +417,25 @@ def read_command_result(path: Path) -> dict[str, Any] | None:
         title = value.get("title", "")
         message = value.get("message", "")
         details = value.get("details", {})
+        click_url = value.get("click_url")
         if not isinstance(title, str) or not isinstance(message, str) or not isinstance(details, dict):
             raise ValueError("title, message, or details has invalid type")
+        if click_url is not None:
+            parsed_click = urllib.parse.urlsplit(str(click_url))
+            if parsed_click.scheme not in {"http", "https"} or not parsed_click.netloc:
+                raise ValueError("click_url must be an absolute http(s) URL")
         encoded_details = json.dumps(details, sort_keys=True)
         if len(encoded_details.encode("utf-8")) > 50000:
             details = {"truncated": True}
-        return {
+        result = {
             "event": event,
             "event_title": title[:200],
             "event_message": message[:4000],
             "event_details": details,
         }
+        if click_url:
+            result["click_url"] = str(click_url)
+        return result
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(f"RESULT IGNORED {path.name}: {exc}", file=sys.stderr)
         return None

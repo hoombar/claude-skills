@@ -358,11 +358,45 @@ def deterministic_relevant(monitor: dict[str, Any], delta: dict[str, Any]) -> bo
     return not configured or bool(configured & occurred)
 
 
+def item_label(item: dict[str, Any]) -> str:
+    return str(item.get("title") or item.get("name") or item.get("url") or "Untitled item")
+
+
+def deterministic_summary(delta: dict[str, Any]) -> str:
+    if delta["kind"] == "document":
+        changed_lines = [line for line in delta.get("diff", []) if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))]
+        excerpt = "\n".join(changed_lines[:8])
+        return "Page content changed" + (f":\n{excerpt}" if excerpt else "")
+    added = delta.get("added", [])
+    removed = delta.get("removed", [])
+    modified = delta.get("modified", [])
+    counts = []
+    if added:
+        counts.append(f"{len(added)} added")
+    if removed:
+        counts.append(f"{len(removed)} removed")
+    if modified:
+        counts.append(f"{len(modified)} modified")
+    lines = [f"Listings changed: {', '.join(counts)}"]
+    lines.extend(f"Added: {item_label(item)}" for item in added[:5])
+    lines.extend(f"Removed: {item_label(item)}" for item in removed[:3])
+    lines.extend(f"Updated: {item_label(item.get('after', {}))}" for item in modified[:3])
+    return "\n".join(lines)
+
+
+def change_click_url(monitor: dict[str, Any], delta: dict[str, Any]) -> str:
+    if delta["kind"] == "items" and len(delta.get("added", [])) == 1:
+        candidate = delta["added"][0].get("url")
+        if isinstance(candidate, str) and urllib.parse.urlsplit(candidate).scheme in {"http", "https"}:
+            return candidate
+    return str(monitor["url"])
+
+
 def evaluate(config: dict[str, Any], monitor: dict[str, Any], delta: dict[str, Any]) -> tuple[bool, str, str]:
     relevance = monitor.get("relevance", {})
     intent = relevance.get("semantic_intent")
     if not intent:
-        return True, "Configured change detected", "Deterministic relevance rule matched"
+        return True, deterministic_summary(delta), "Deterministic relevance rule matched"
     evaluator = config.get("evaluator", {})
     if not evaluator.get("enabled"):
         raise MonitorError("semantic_intent requires an enabled evaluator")
@@ -433,7 +467,7 @@ def atomic_json(path: Path, value: dict[str, Any]) -> None:
             os.unlink(temporary)
 
 
-def write_result(event: str, title: str, message: str, details: dict[str, Any]) -> None:
+def write_result(event: str, title: str, message: str, details: dict[str, Any], click_url: str | None = None) -> None:
     raw_path = os.environ.get("SKILL_SCHEDULER_RESULT_FILE")
     if not raw_path:
         return
@@ -452,7 +486,10 @@ def write_result(event: str, title: str, message: str, details: dict[str, Any]) 
                 "diff_line_count": len(delta.get("diff", [])),
             },
         }
-    atomic_json(path, {"schema_version": 1, "event": event, "title": title[:200], "message": message[:4000], "details": result_details})
+    payload = {"schema_version": 1, "event": event, "title": title[:200], "message": message[:4000], "details": result_details}
+    if click_url:
+        payload["click_url"] = click_url
+    atomic_json(path, payload)
 
 
 def save_observation(path: Path, monitor: dict[str, Any], observation: dict[str, Any]) -> None:
@@ -481,7 +518,8 @@ def run_monitor(config: dict[str, Any], config_path: Path, monitor: dict[str, An
         history_path.parent.mkdir(parents=True, exist_ok=True)
         with history_path.open("a", encoding="utf-8") as handle:
             handle.write(canonical_json({"at": utc_now(), **result}) + "\n")
-        write_result(result["event"], str(monitor.get("title", monitor["id"])), result["message"], result["details"])
+        click_url = change_click_url(monitor, result["details"]["delta"]) if result["event"] == "changed" else None
+        write_result(result["event"], str(monitor.get("title", monitor["id"])), result["message"], result["details"], click_url)
         save_observation(state_path, monitor, observation)
         return result
 
