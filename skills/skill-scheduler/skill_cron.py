@@ -14,6 +14,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,18 @@ WEEKDAYS = {
     "sunday": 6,
 }
 
-NOTIFICATION_EVENTS = {"success", "failed", "timeout", "failure", "completion"}
+NOTIFICATION_EVENTS = {
+    "success",
+    "failed",
+    "timeout",
+    "failure",
+    "completion",
+    "initialized",
+    "unchanged",
+    "changed",
+    "changed_suppressed",
+}
+COMMAND_EVENTS = {"initialized", "unchanged", "changed", "changed_suppressed"}
 
 
 class ConfigError(Exception):
@@ -148,7 +160,7 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ConfigError("[[notifications]] entries must be TOML tables")
     seen_notification_ids: set[str] = set()
     for notification in notifications:
-        validate_notification(notification, seen_notification_ids)
+        validate_notification(notification, seen_notification_ids, seen_ids)
 
 
 def validate_job(job: Any, commands: dict[str, Any], seen_ids: set[str]) -> None:
@@ -177,7 +189,7 @@ def validate_job(job: Any, commands: dict[str, Any], seen_ids: set[str]) -> None
         parse_weekly(str(schedule["weekly"]))
 
 
-def validate_notification(notification: Any, seen_ids: set[str]) -> None:
+def validate_notification(notification: Any, seen_ids: set[str], valid_job_ids: set[str]) -> None:
     if not isinstance(notification, dict):
         raise ConfigError("Each [[notifications]] entry must be a table")
     notification_id = notification.get("id")
@@ -198,6 +210,12 @@ def validate_notification(notification: Any, seen_ids: set[str]) -> None:
     unknown_events = sorted(set(events) - NOTIFICATION_EVENTS)
     if unknown_events:
         raise ConfigError(f"notifications.{notification_id}.events has unknown values: {', '.join(unknown_events)}")
+    job_ids = notification.get("job_ids", [])
+    if not isinstance(job_ids, list) or not all(isinstance(item, str) and item for item in job_ids):
+        raise ConfigError(f"notifications.{notification_id}.job_ids must be a string array when set")
+    unknown_job_ids = sorted(set(job_ids) - valid_job_ids)
+    if unknown_job_ids:
+        raise ConfigError(f"notifications.{notification_id}.job_ids has unknown values: {', '.join(unknown_job_ids)}")
     url = notification.get("url")
     if not isinstance(url, str) or not url:
         raise ConfigError(f"notifications.{notification_id}.url is required")
@@ -282,9 +300,14 @@ def append_command_log(command: dict[str, Any], record: dict[str, Any]) -> None:
                 handle.write("\n")
 
 
-def notification_matches(notification: dict[str, Any], status: str) -> bool:
+def notification_matches(notification: dict[str, Any], record: dict[str, Any]) -> bool:
+    job_ids = set(notification.get("job_ids", []))
+    if job_ids and record["job_id"] not in job_ids:
+        return False
+    status = str(record["status"])
+    event = str(record.get("event", ""))
     events = set(notification.get("events", ["failed", "timeout"]))
-    if status in events:
+    if status in events or event in events:
         return True
     if "failure" in events and status in {"failed", "timeout"}:
         return True
@@ -296,7 +319,8 @@ def notification_matches(notification: dict[str, Any], status: str) -> bool:
 def notification_payload(job: dict[str, Any], record: dict[str, Any]) -> tuple[str, str]:
     title = str(record.get("title") or job.get("title") or record["job_id"])
     status = str(record["status"])
-    notification_title = f"Skill Scheduler: {title} {status}"
+    outcome = str(record.get("event", status))
+    notification_title = str(record.get("event_title") or f"Skill Scheduler: {title} {outcome}")
     lines = [
         f"Job: {record['job_id']}",
         f"Status: {status}",
@@ -307,6 +331,8 @@ def notification_payload(job: dict[str, Any], record: dict[str, Any]) -> tuple[s
         lines.append(f"Return code: {record['returncode']}")
     if "timeout_seconds" in record:
         lines.append(f"Timeout: {record['timeout_seconds']} seconds")
+    if record.get("event_message"):
+        lines.extend(["", str(record["event_message"])])
     stderr_tail = str(record.get("stderr_tail", "")).strip()
     if stderr_tail:
         lines.append("")
@@ -356,7 +382,7 @@ def send_webhook_notification(notification: dict[str, Any], title: str, message:
 
 def send_notifications(config: dict[str, Any], job: dict[str, Any], record: dict[str, Any]) -> None:
     for notification in config.get("notifications", []):
-        if notification.get("enabled") is False or not notification_matches(notification, str(record["status"])):
+        if notification.get("enabled") is False or not notification_matches(notification, record):
             continue
         title, message = notification_payload(job, record)
         try:
@@ -366,6 +392,40 @@ def send_notifications(config: dict[str, Any], job: dict[str, Any], record: dict
                 send_webhook_notification(notification, title, message, record)
         except (OSError, RuntimeError, urllib.error.URLError, TimeoutError) as exc:
             print(f"NOTIFY FAILED {record['job_id']} {notification['id']}: {exc}", file=sys.stderr)
+
+
+def read_command_result(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        if path.stat().st_size > 65536:
+            raise ValueError("result exceeds 65536 bytes")
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict) or value.get("schema_version") != 1:
+            raise ValueError("unsupported result schema")
+        event = value.get("event")
+        if event not in COMMAND_EVENTS:
+            raise ValueError(f"unknown event {event!r}")
+        title = value.get("title", "")
+        message = value.get("message", "")
+        details = value.get("details", {})
+        if not isinstance(title, str) or not isinstance(message, str) or not isinstance(details, dict):
+            raise ValueError("title, message, or details has invalid type")
+        encoded_details = json.dumps(details, sort_keys=True)
+        if len(encoded_details.encode("utf-8")) > 50000:
+            details = {"truncated": True}
+        return {
+            "event": event,
+            "event_title": title[:200],
+            "event_message": message[:4000],
+            "event_details": details,
+        }
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"RESULT IGNORED {path.name}: {exc}", file=sys.stderr)
+        return None
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
 
 
 @contextlib.contextmanager
@@ -461,10 +521,16 @@ def run_job(
         with lock(lock_path):
             job_state["last_attempt_at"] = iso(now)
             job_state["last_status"] = "running"
+            job_state.pop("last_event", None)
             save_state(state_path, state)
             started = now_local()
+            result_path = state_path / "results" / f"{job_id}-{uuid.uuid4().hex}.json"
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            command_env = os.environ.copy()
+            command_env["SKILL_SCHEDULER_RESULT_FILE"] = str(result_path)
             result = subprocess.run(
                 command["argv"],
+                env=command_env,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -494,6 +560,14 @@ def run_job(
                 "stdout_tail": result.stdout[-4000:],
                 "stderr_tail": result.stderr[-4000:],
             }
+            if status == "success":
+                command_result = read_command_result(result_path)
+                if command_result:
+                    record.update(command_result)
+                    job_state["last_event"] = command_result["event"]
+            else:
+                with contextlib.suppress(FileNotFoundError):
+                    result_path.unlink()
             append_command_log(command, record)
             send_notifications(config, job, record)
             record.pop("stdout_for_log", None)
@@ -506,6 +580,8 @@ def run_job(
         print(f"SKIP {job_id}: lock held")
         return 0
     except subprocess.TimeoutExpired as exc:
+        with contextlib.suppress(UnboundLocalError, FileNotFoundError):
+            result_path.unlink()
         finished = now_local()
         job_state["last_finished_at"] = iso(finished)
         job_state["last_status"] = "timeout"
@@ -532,6 +608,8 @@ def run_job(
         print(f"TIMEOUT {job_id}")
         return 124
     except OSError as exc:
+        with contextlib.suppress(UnboundLocalError, FileNotFoundError):
+            result_path.unlink()
         finished = now_local()
         job_state["last_finished_at"] = iso(finished)
         job_state["last_status"] = "failed"

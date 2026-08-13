@@ -15,6 +15,7 @@ A collection of reusable [Claude Code](https://docs.anthropic.com/en/docs/claude
 | [promote-permissions](skills/promote-permissions/) | Find permissions Claude requested during a session and offer to add them permanently |
 | [skill-scheduler](skills/skill-scheduler/) | Run one cron-invoked scheduler that dispatches recurring skills and scripts from local config |
 | [todoist](skills/todoist/) | Manage Todoist tasks via the CLI |
+| [website-monitor](skills/website-monitor/) | Monitor website documents and paginated listings with deterministic diffs and optional semantic relevance evaluation |
 | [youtube-podcast-generator](skills/youtube-podcast-generator/) | Generate NotebookLM audio podcasts from curated YouTube channels |
 
 ## Installation

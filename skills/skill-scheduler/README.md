@@ -95,8 +95,19 @@ Supported events:
 - `timeout` - job exceeded `timeout_seconds`.
 - `failure` - shorthand for `failed` and `timeout`.
 - `completion` - shorthand for `success`, `failed`, and `timeout`.
+- `initialized`, `unchanged`, `changed`, `changed_suppressed` - optional semantic events reported by successful commands.
 
 For ntfy token auth, set `token_env = "NTFY_TOKEN"` and provide that environment variable to cron. Do not store secrets in TOML.
+
+Set `job_ids = ["job-a", "job-b"]` to limit a notification provider to specific scheduler jobs.
+
+Commands can atomically write a versioned JSON object to the path in `SKILL_SCHEDULER_RESULT_FILE`:
+
+```json
+{"schema_version":1,"event":"changed","title":"Listings changed","message":"One item was added","details":{"added":1}}
+```
+
+The result file is optional. Process exit status still determines execution success or failure.
 
 ## Design Notes
 

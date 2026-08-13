@@ -1,0 +1,63 @@
+[settings]
+state_dir = "~/.local/state/website-monitor"
+user_agent = "website-monitor/1.0"
+timeout_seconds = 30
+max_response_bytes = 5000000
+
+# Optional. The command receives JSON on stdin and must return the relevance
+# schema as stdout, or write it to {output_file} when that placeholder is used.
+[evaluator]
+enabled = false
+argv = ["/path/to/evaluator", "--output", "{output_file}"]
+timeout_seconds = 120
+
+[[monitors]]
+id = "example-listings"
+title = "Example listings"
+url = "https://example.com/listings"
+enabled = true
+fetcher = "http"
+mode = "items"
+
+[monitors.pagination]
+enabled = true
+link_selector = "nav.pagination a"
+allowed_path_regex = "^/listings(?:/page/[0-9]+)?$"
+max_pages = 20
+
+[monitors.items]
+selector = "article.listing"
+key_field = "url"
+max_items = 500
+
+[monitors.items.fields.url]
+selector = "a"
+output = "attribute"
+attribute = "href"
+resolve_url = true
+
+[monitors.items.fields.title]
+selector = "h2"
+output = "text"
+
+[monitors.relevance]
+events = ["items_added"]
+
+[[monitors]]
+id = "example-document"
+title = "Example document"
+url = "https://example.com/status"
+enabled = false
+fetcher = "http"
+mode = "document"
+
+[monitors.document]
+include = ["main"]
+exclude = [".last-updated"]
+
+[monitors.normalize]
+collapse_whitespace = true
+
+[monitors.relevance]
+events = ["document_changed"]
+semantic_intent = "Notify only when the substantive status information changes."

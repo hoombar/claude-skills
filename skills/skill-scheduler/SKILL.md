@@ -111,6 +111,8 @@ Supported providers:
 
 Supported events are `success`, `failed`, `timeout`, `failure`, and `completion`. Notification delivery errors are logged to stderr but do not change the job result.
 
+Successful commands may report `initialized`, `unchanged`, `changed`, or `changed_suppressed` by writing versioned JSON to `SKILL_SCHEDULER_RESULT_FILE`. Use notification `job_ids` to scope providers to selected jobs.
+
 ## Safety Rules
 
 - Prefer deterministic script handlers for frequent or expensive jobs.

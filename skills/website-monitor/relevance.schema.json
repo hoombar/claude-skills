@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "relevant": { "type": "boolean" },
+    "summary": { "type": "string", "maxLength": 500 },
+    "reason": { "type": "string", "maxLength": 1000 }
+  },
+  "required": ["relevant", "summary", "reason"]
+}
