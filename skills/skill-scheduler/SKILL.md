@@ -37,6 +37,7 @@ cp <skill-dir>/skill_cron.example.toml <skill-dir>/skill_cron.toml
 - Set `settings.state_dir` to a durable local directory on the machine that runs cron.
 - Add one `commands.<id>.argv` entry per allowed script or skill invocation.
 - Add one `[[jobs]]` entry per scheduled recurring workflow.
+- Optionally add `[[notifications]]` entries for completion or failure alerts.
 - Keep commands as argv arrays. Do not use shell strings for routine automation.
 - Set `commands.<id>.log_path` when a job should continue writing to an existing per-job log file.
 
@@ -88,6 +89,27 @@ python3 skill_cron.py tick --quiet
 # Force one job by id
 python3 skill_cron.py run kobo-epub
 ```
+
+## Notifications
+
+Use optional `[[notifications]]` entries when the user wants alerts after job completion or failure. Providers are intentionally configurable so installations can swap notification systems later.
+
+```toml
+[[notifications]]
+id = "phone"
+provider = "ntfy"
+enabled = true
+events = ["failed", "timeout"]
+url = "http://127.0.0.1:2586"
+topic = "skill-scheduler"
+```
+
+Supported providers:
+
+- `ntfy` posts to the ntfy HTTP API.
+- `webhook` posts JSON to a custom endpoint.
+
+Supported events are `success`, `failed`, `timeout`, `failure`, and `completion`. Notification delivery errors are logged to stderr but do not change the job result.
 
 ## Safety Rules
 

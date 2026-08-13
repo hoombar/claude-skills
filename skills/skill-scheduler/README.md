@@ -27,6 +27,14 @@ The scheduler reads `skill_cron.toml` by default.
 state_dir = "/home/ben/.local/state/skill-cron"
 max_jobs_per_tick = 3
 
+[[notifications]]
+id = "phone"
+provider = "ntfy"
+enabled = true
+events = ["failed", "timeout"]
+url = "http://127.0.0.1:2586"
+topic = "skill-scheduler"
+
 [commands.example]
 argv = ["/usr/bin/python3", "/path/to/script.py", "--count", "1"]
 timeout_seconds = 2700
@@ -70,6 +78,25 @@ The runner writes these files under `settings.state_dir`:
 - `runs.jsonl` - append-only run log.
 - `locks/scheduler.lock` - global tick lock.
 - `locks/<job-id>.lock` - per-job lock.
+
+## Notifications
+
+Notifications are optional `[[notifications]]` tables. They run after a job finishes and do not change the job result if notification delivery fails.
+
+Supported providers:
+
+- `ntfy` - posts to `<url>/<topic>` using ntfy's HTTP API.
+- `webhook` - posts JSON to `url` for custom integrations.
+
+Supported events:
+
+- `success` - successful job runs.
+- `failed` - non-zero exit status or launch errors.
+- `timeout` - job exceeded `timeout_seconds`.
+- `failure` - shorthand for `failed` and `timeout`.
+- `completion` - shorthand for `success`, `failed`, and `timeout`.
+
+For ntfy token auth, set `token_env = "NTFY_TOKEN"` and provide that environment variable to cron. Do not store secrets in TOML.
 
 ## Design Notes
 

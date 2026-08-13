@@ -11,6 +11,9 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +42,8 @@ WEEKDAYS = {
     "sun": 6,
     "sunday": 6,
 }
+
+NOTIFICATION_EVENTS = {"success", "failed", "timeout", "failure", "completion"}
 
 
 class ConfigError(Exception):
@@ -136,6 +141,14 @@ def validate_config(config: dict[str, Any]) -> None:
     seen_ids: set[str] = set()
     for job in jobs:
         validate_job(job, commands, seen_ids)
+    notifications = config.get("notifications", [])
+    if notifications is None:
+        return
+    if not isinstance(notifications, list):
+        raise ConfigError("[[notifications]] entries must be TOML tables")
+    seen_notification_ids: set[str] = set()
+    for notification in notifications:
+        validate_notification(notification, seen_notification_ids)
 
 
 def validate_job(job: Any, commands: dict[str, Any], seen_ids: set[str]) -> None:
@@ -162,6 +175,46 @@ def validate_job(job: Any, commands: dict[str, Any], seen_ids: set[str]) -> None
         parse_time(str(schedule["daily_at"]))
     if "weekly" in schedule:
         parse_weekly(str(schedule["weekly"]))
+
+
+def validate_notification(notification: Any, seen_ids: set[str]) -> None:
+    if not isinstance(notification, dict):
+        raise ConfigError("Each [[notifications]] entry must be a table")
+    notification_id = notification.get("id")
+    if not isinstance(notification_id, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]+", notification_id):
+        raise ConfigError("Each notification id must contain only letters, numbers, dots, underscores, and hyphens")
+    if notification_id in seen_ids:
+        raise ConfigError(f"Duplicate notification id: {notification_id}")
+    seen_ids.add(notification_id)
+    provider = notification.get("provider")
+    if provider not in {"ntfy", "webhook"}:
+        raise ConfigError(f"notifications.{notification_id}.provider must be ntfy or webhook")
+    enabled = notification.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ConfigError(f"notifications.{notification_id}.enabled must be boolean")
+    events = notification.get("events", ["failed", "timeout"])
+    if not isinstance(events, list) or not events or not all(isinstance(item, str) for item in events):
+        raise ConfigError(f"notifications.{notification_id}.events must be a non-empty string array")
+    unknown_events = sorted(set(events) - NOTIFICATION_EVENTS)
+    if unknown_events:
+        raise ConfigError(f"notifications.{notification_id}.events has unknown values: {', '.join(unknown_events)}")
+    url = notification.get("url")
+    if not isinstance(url, str) or not url:
+        raise ConfigError(f"notifications.{notification_id}.url is required")
+    if provider == "ntfy":
+        topic = notification.get("topic")
+        if not isinstance(topic, str) or not topic:
+            raise ConfigError(f"notifications.{notification_id}.topic is required for ntfy")
+        token_env = notification.get("token_env")
+        if token_env is not None and not isinstance(token_env, str):
+            raise ConfigError(f"notifications.{notification_id}.token_env must be a string when set")
+        tags = notification.get("tags", [])
+        if not isinstance(tags, list) or not all(isinstance(item, str) for item in tags):
+            raise ConfigError(f"notifications.{notification_id}.tags must be a string array when set")
+    if provider == "webhook":
+        headers = notification.get("headers", {})
+        if not isinstance(headers, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in headers.items()):
+            raise ConfigError(f"notifications.{notification_id}.headers must be a string table when set")
 
 
 def state_dir(config: dict[str, Any], config_path: Path) -> Path:
@@ -227,6 +280,92 @@ def append_command_log(command: dict[str, Any], record: dict[str, Any]) -> None:
             handle.write(stderr)
             if not stderr.endswith("\n"):
                 handle.write("\n")
+
+
+def notification_matches(notification: dict[str, Any], status: str) -> bool:
+    events = set(notification.get("events", ["failed", "timeout"]))
+    if status in events:
+        return True
+    if "failure" in events and status in {"failed", "timeout"}:
+        return True
+    if "completion" in events and status in {"success", "failed", "timeout"}:
+        return True
+    return False
+
+
+def notification_payload(job: dict[str, Any], record: dict[str, Any]) -> tuple[str, str]:
+    title = str(record.get("title") or job.get("title") or record["job_id"])
+    status = str(record["status"])
+    notification_title = f"Skill Scheduler: {title} {status}"
+    lines = [
+        f"Job: {record['job_id']}",
+        f"Status: {status}",
+        f"Started: {record['started_at']}",
+        f"Finished: {record['finished_at']}",
+    ]
+    if "returncode" in record:
+        lines.append(f"Return code: {record['returncode']}")
+    if "timeout_seconds" in record:
+        lines.append(f"Timeout: {record['timeout_seconds']} seconds")
+    stderr_tail = str(record.get("stderr_tail", "")).strip()
+    if stderr_tail:
+        lines.append("")
+        lines.append(stderr_tail[-1200:])
+    return notification_title, "\n".join(lines)
+
+
+def send_ntfy_notification(notification: dict[str, Any], title: str, message: str, status: str) -> None:
+    base_url = str(notification["url"]).rstrip("/")
+    topic = urllib.parse.quote(str(notification["topic"]).strip("/"), safe="")
+    url = f"{base_url}/{topic}"
+    headers = {
+        "Title": title,
+        "Priority": str(notification.get("priority", "high" if status in {"failed", "timeout"} else "default")),
+    }
+    tags = notification.get("tags", [])
+    if tags:
+        headers["Tags"] = ",".join(str(tag) for tag in tags)
+    token_env = notification.get("token_env")
+    if token_env:
+        token = os.environ.get(str(token_env))
+        if not token:
+            raise RuntimeError(f"environment variable {token_env} is not set")
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, data=message.encode("utf-8"), headers=headers, method="POST")
+    with urllib.request.urlopen(request, timeout=int(notification.get("timeout_seconds", 10))) as response:
+        response.read()
+
+
+def send_webhook_notification(notification: dict[str, Any], title: str, message: str, record: dict[str, Any]) -> None:
+    headers = {"Content-Type": "application/json"}
+    headers.update(notification.get("headers", {}))
+    payload = {
+        "title": title,
+        "message": message,
+        "record": {key: value for key, value in record.items() if key not in {"stdout_for_log", "stderr_for_log"}},
+    }
+    request = urllib.request.Request(
+        str(notification["url"]),
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=int(notification.get("timeout_seconds", 10))) as response:
+        response.read()
+
+
+def send_notifications(config: dict[str, Any], job: dict[str, Any], record: dict[str, Any]) -> None:
+    for notification in config.get("notifications", []):
+        if notification.get("enabled") is False or not notification_matches(notification, str(record["status"])):
+            continue
+        title, message = notification_payload(job, record)
+        try:
+            if notification["provider"] == "ntfy":
+                send_ntfy_notification(notification, title, message, str(record["status"]))
+            elif notification["provider"] == "webhook":
+                send_webhook_notification(notification, title, message, record)
+        except (OSError, RuntimeError, urllib.error.URLError, TimeoutError) as exc:
+            print(f"NOTIFY FAILED {record['job_id']} {notification['id']}: {exc}", file=sys.stderr)
 
 
 @contextlib.contextmanager
@@ -356,6 +495,7 @@ def run_job(
                 "stderr_tail": result.stderr[-4000:],
             }
             append_command_log(command, record)
+            send_notifications(config, job, record)
             record.pop("stdout_for_log", None)
             record.pop("stderr_for_log", None)
             append_log(state_path, record)
@@ -384,6 +524,7 @@ def run_job(
             "stderr_tail": (exc.stderr or "")[-4000:] if isinstance(exc.stderr, str) else "",
         }
         append_command_log(command, record)
+        send_notifications(config, job, record)
         record.pop("stdout_for_log", None)
         record.pop("stderr_for_log", None)
         append_log(state_path, record)
@@ -409,6 +550,7 @@ def run_job(
             "stderr_tail": str(exc),
         }
         append_command_log(command, record)
+        send_notifications(config, job, record)
         record.pop("stdout_for_log", None)
         record.pop("stderr_for_log", None)
         append_log(state_path, record)

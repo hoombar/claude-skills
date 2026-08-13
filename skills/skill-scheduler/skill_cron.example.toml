@@ -3,6 +3,16 @@
 state_dir = "/home/ben/.local/state/skill-cron"
 max_jobs_per_tick = 3
 
+[[notifications]]
+id = "phone"
+provider = "ntfy"
+enabled = false
+events = ["failed", "timeout"]
+url = "http://127.0.0.1:2586"
+topic = "skill-scheduler"
+priority = "high"
+tags = ["warning"]
+
 [commands.kobo_daily_reader]
 argv = ["/home/ben/venvs/kobo/bin/python", "/home/ben/.claude/skills/kobo-epub-pipeline/kobo_daily_reader.py", "--count", "1"]
 timeout_seconds = 2700
