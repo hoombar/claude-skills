@@ -22,10 +22,10 @@ Use this skill when the user wants to:
 This skill works best when the vault has:
 
 1. A daily note template with a dedicated marker block for braindumps
-2. A single AI-managed folder for runtime state, action checklists, and retro receipts
+2. A single AI-managed folder for action checklists, retro receipts, and thread notes
 3. A clear adoption date after which the marker pattern is considered active
 
-If the vault separates human-owned notes from AI-managed notes, do not write into the human-owned area without explicit permission.
+The inline cursor requires editing the marked braindump block in each source daily note. Confirm that the user permits this narrow workflow edit; do not make other changes in a human-owned area without explicit permission.
 
 ## Daily Note Template
 
@@ -61,7 +61,6 @@ Daily notes/
 AI/
   Braindump Retro/
     runtime/
-      logs/
       retros/
       actions/
       threads/
@@ -70,11 +69,9 @@ AI/
 
 Recommended runtime files:
 
-- `AI/Braindump Retro/runtime/logs/YYYY-MM.jsonl`
 - `AI/Braindump Retro/runtime/retros/braindump-retro-YYYY-MM-DD.md`
 - `AI/Braindump Retro/runtime/actions/braindump-retro-actions-YYYY-MM-DD.md`
 - `AI/Braindump Retro/runtime/threads/<thread-slug>.md`
-- `AI/Braindump Retro/runtime/state/latest-checkpoint.json`
 - `AI/Braindump Retro/runtime/state/active-threads.md`
 
 The runtime area is AI-managed state. Keep it separate from the daily notes themselves.
@@ -103,9 +100,8 @@ When merging into the active checklist:
 - preserve all existing action checkbox states, headings, questions, links, and notes
 - semantically deduplicate new actions against existing checklist content and durable destination notes
 - append actions under an existing matching heading when practical, creating a concise heading only when needed
-- preserve `captured`, update `updated`, and record the additional review window in the checklist
-- keep a separate retro receipt, ledger update, and checkpoint update for the new run
-- point new ledger `routed_to` values and the new retro receipt at the reused checklist path
+- preserve `captured`, update `updated`, and record the additional retro run in the checklist
+- keep a separate retro receipt for the new run and point it at the reused checklist path
 
 ## Core Model
 
@@ -134,23 +130,25 @@ A raw capture is a single fragment from a daily note. An idea thread is a higher
 
 Repeated thoughts across different days are a signal, not noise. Do not deduplicate them away by default.
 
-## Review Window
+## Inline Processing Cursor
 
-Never use the current month as the review boundary.
+Processed state lives inside each braindump block so it travels with the Markdown note through Obsidian Sync. Do not maintain a separate ledger or checkpoint.
 
-The checkpoint and ledger are mandatory runtime state. Do not run this workflow by simply grepping all daily notes and routing whatever is found.
+The cursor has this exact shape:
 
-The review window must be driven by a checkpoint file, not by the ledger partition.
+```md
+<!-- BRAIN_DUMP_RETRO:PROCESSED at="YYYY-MM-DDTHH:MM:SSZ" retro="AI/Braindump Retro/runtime/retros/braindump-retro-YYYY-MM-DD.md" -->
+```
 
-1. Read `runtime/state/latest-checkpoint.json` if it exists
-2. If it exists, use its timestamp as the exclusive lower bound
-3. If it does not exist, use the user-defined adoption date as the initial lower bound
-4. Set the upper bound to the current retro run time
-5. Load every daily note and every monthly log partition touched by that time range
+For every daily note dated on or after the user-defined adoption date:
 
-Monthly partitioning is only a storage optimization. It must never limit the retrospective window.
+1. Find the content between `BRAIN_DUMP:START` and `BRAIN_DUMP:END`
+2. Find the last valid `BRAIN_DUMP_RETRO:PROCESSED` cursor inside that block, if present
+3. Treat only substantive content after that cursor and before `BRAIN_DUMP:END` as unprocessed
+4. If no cursor exists, treat the whole marked block as unprocessed
+5. Ignore blank space and cursor comments when deciding whether work exists
 
-Before routing anything, build a set of already-ledgered `capture_id` values from every loaded monthly log. If a capture id already exists, skip it unless the user explicitly asks for a reprocess.
+After every capture from a note has been routed successfully, remove any older processed cursor from that block and insert one updated cursor after the processed content, immediately before `BRAIN_DUMP:END`. If routing or required output writes fail, do not advance that note's cursor. This allows new captures to be appended after the cursor later without reprocessing older material.
 
 ## Extraction Rules
 
@@ -162,19 +160,14 @@ For each note in scope:
 4. If there are no bullets, split by paragraph blocks
 5. Preserve the raw wording as much as possible
 
-Assign each capture a stable id using the note date plus ordinal position.
-
 ## Retro Workflow
 
-1. Determine the review window from the checkpoint
-2. Load marked daily-note captures in that window
-3. Load only the monthly log partitions touched by that window
-4. Load all action checklists under `runtime/actions/`, identify the active checklist from the exact `Triage complete` control, and inspect current and recent checklists for semantic duplicates
-5. Load the active thread index
-6. Load only the thread notes that appear relevant
-7. Assign stable ids using note date plus ordinal position
-8. Drop any capture whose stable id is already present in the loaded ledger partitions, unless the user explicitly requested reprocessing
-9. Classify each remaining capture:
+1. Scan daily notes in all configured active and archive locations from the adoption date onward
+2. Extract only content after each note's last processed cursor
+3. Load all action checklists under `runtime/actions/`, identify the active checklist from the exact `Triage complete` control, and inspect current and recent checklists for semantic duplicates
+4. Load the active thread index
+5. Load only the thread notes that appear relevant
+6. Classify each remaining capture:
    - action
    - idea
    - project-related
@@ -182,7 +175,7 @@ Assign each capture a stable id using the note date plus ordinal position.
    - research topic
    - fleeting thought
    - question
-10. Decide whether to:
+7. Decide whether to:
    - file into an existing AI-managed note
    - append to an existing history, plan, ideas, or next-steps note
    - create a short action in the run action checklist
@@ -190,26 +183,27 @@ Assign each capture a stable id using the note date plus ordinal position.
    - link to an existing thread only when no better durable note exists yet
    - create a new thread only for repeated or genuinely emerging themes with no existing destination
    - discard
-11. Apply safe AI-managed filings immediately. Examples:
+8. Apply safe AI-managed filings immediately. Examples:
    - workout logs go into an existing training history note
    - workout workflow questions, such as whether a separate training log should exist or whether weekly retro should update it, should become clarifying questions unless the user has already established the rule
    - project ideas go into that project's existing ideas, plan, or next-steps note
    - one-off follow-ups go into the run action checklist
-12. Create a slim retro receipt
-13. Merge into the single active unchecked checklist, or create a new unchecked checklist when none is active
-14. Update the monthly log, thread notes, and checkpoint state
-15. Propose any edits to user-owned notes before making them
+9. Create a slim retro receipt
+10. Merge into the single active unchecked checklist, or create a new unchecked checklist when none is active
+11. Update thread notes and the active thread index
+12. Advance the inline cursor in each successfully processed daily note
+13. Propose any other edits to user-owned notes before making them
 
 ## Duplicate Handling
 
 Duplicates are possible in two ways:
 
-- exact duplicate: the same stable `capture_id` already appears in the ledger
+- already processed source: content appears before a daily note's latest inline cursor
 - semantic duplicate: the same task or idea already appears in an existing action checklist or durable destination note
 
 Rules:
 
-- Never route an exact duplicate.
+- Never route content before the latest inline cursor.
 - For semantic duplicates, do not add a second action. Link to the existing action or note in the retro receipt if useful.
 - If a repeated thought adds new detail, strengthen the existing durable note rather than creating another action.
 - If unsure whether something is duplicate or new, add it to clarifying questions instead of silently routing it.
@@ -220,7 +214,7 @@ The retro note is a routing receipt, not the product. Keep it extremely slim.
 
 Include only:
 
-- review window
+- retro run time
 - daily notes with non-empty marked braindumps
 - routing summary: destination notes and action checklist
 - skipped duplicate summary when applicable
@@ -241,7 +235,7 @@ The action checklist is the main user-facing output. Keep it short, high signal,
 - link the relevant destination note when useful
 - avoid explanation unless needed to make the action executable
 - include a `Clarifying Questions` section when captures were ambiguous or when routing required an assumption
-- record every review window routed into the checklist; use a short `Source windows` list when a checklist contains more than one run
+- record every retro run routed into the checklist; use a short `Retro runs` list when a checklist contains more than one run
 
 ## Thread Notes
 
@@ -254,25 +248,7 @@ Keep thread notes short and current. Suggested sections:
 - `Open questions`
 - `Next experiment`
 
-Do not copy every raw capture into the thread note. Summarize the pattern and keep the full history in the ledger.
-
-## Ledger Guidance
-
-Use one JSON object per line in the monthly log. Example fields:
-
-- `capture_id`
-- `source_note`
-- `source_date`
-- `ordinal`
-- `raw_text`
-- `normalized_hash`
-- `raw_status`
-- `thread_slug`
-- `retro_note`
-- `routed_to`
-- `updated_at`
-
-The ledger is state, not prompt context. Do not load the full history by default.
+Do not copy every raw capture into the thread note. Summarize the pattern; the source daily note and retro receipt provide the processing history.
 
 Use `question` when a capture is understandable but the correct routing decision is unclear, such as whether to create a new durable note or update an existing workflow. Record the item in the current action checklist's clarifying questions section so it is not silently lost.
 
@@ -280,18 +256,17 @@ Use `question` when a capture is understandable but the correct routing decision
 
 To keep context small:
 
-1. Load daily note captures only for the active review window
-2. Load only the monthly ledger files that overlap the window
-3. Build a set of already-ledgered `capture_id` values and skip exact duplicates
-4. Load current and recent action checklists to catch semantic duplicates before creating new actions
-5. Load the active thread index
-6. Load only likely-matching thread notes
-7. Load older retro summaries only when needed for a specific thread
+1. Scan configured daily-note locations from the adoption date onward
+2. Load only substantive content after each note's latest processed cursor
+3. Load current and recent action checklists to catch semantic duplicates before creating new actions
+4. Load the active thread index
+5. Load only likely-matching thread notes
+6. Load older retro summaries only when needed for a specific thread
 
 The main memory surfaces should be:
 
 - the active thread index
-- the current retro window
+- the current unprocessed daily-note captures
 - routed project/history notes
 - action checklists
 - concise thread notes
