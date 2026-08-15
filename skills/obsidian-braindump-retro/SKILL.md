@@ -89,21 +89,26 @@ This checkbox records whether the user has manually reviewed the checklist as a 
 Before routing a run, inspect every Markdown file under `runtime/actions/`, including files that do not follow the preferred filename pattern, and count the checklists containing an unchecked `Triage complete` control. The active checklist filename must match the date of the retro run.
 
 - Exactly one unchecked checklist dated today: update it in place for an additional same-day run.
-- Exactly one unchecked checklist from an earlier date: roll it forward. Copy its actions, headings, clarifying questions, links, notes, and individual checkbox states into a new `braindump-retro-actions-YYYY-MM-DD.md` for today's run; check `Triage complete` in the previous file and add a `Rolled forward to [[new-checklist]]` note.
+- Exactly one unchecked checklist from an earlier date: roll it forward. Copy only unchecked actions and unresolved clarifying questions into a new `braindump-retro-actions-YYYY-MM-DD.md` for today's run; check `Triage complete` in the previous file and add a `Rolled forward to [[new-checklist]]` note.
 - No unchecked checklist: create `braindump-retro-actions-YYYY-MM-DD.md` with an unchecked `Triage complete` control.
 - More than one unchecked checklist: do not choose or combine them automatically. Ask the user which checklist should remain active.
 - A legacy checklist with no `Triage complete` control is historical and closed for rollover purposes, but still load it when needed for semantic duplicate detection.
 
 Normally only the user marks `Triage complete`. The workflow may check it automatically only when rolling that checklist into a new run-dated file. Never infer triage state from individual action checkboxes or reopen a checked checklist.
 
-When rolling forward or updating a same-day checklist:
+When rolling forward:
 
-- preserve all existing action checkbox states, headings, questions, links, and notes
+- leave the previous checklist's actions and checkbox states unchanged
+- copy unchecked `- [ ]` items and omit completed `- [x]` or `- [X]` items
+- treat legacy plain bullets under `Clarifying Questions` as unresolved and copy them; for new checklists, write clarifying questions as checkbox items so checked questions can be omitted later
+- copy only headings, links, and notes needed to understand the carried items; omit empty sections
 - semantically deduplicate new actions against existing checklist content and durable destination notes
 - append actions under an existing matching heading when practical, creating a concise heading only when needed
 - use the current run date for the new checklist's filename, title, `captured`, and `updated` values
 - record only the current file's retro runs and link a rolled checklist back to its predecessor with `Rolled forward from [[previous-checklist]]`
 - keep a separate retro receipt for the new run and point it at the current run-dated checklist
+
+When updating an additional same-day run, preserve every existing item and checkbox state, then append only new unique actions and questions.
 
 ## Core Model
 
@@ -236,7 +241,7 @@ The action checklist is the main user-facing output. Keep it short, high signal,
 - one checkbox per action
 - link the relevant destination note when useful
 - avoid explanation unless needed to make the action executable
-- include a `Clarifying Questions` section when captures were ambiguous or when routing required an assumption
+- include a `Clarifying Questions` section with one checkbox per question when captures were ambiguous or when routing required an assumption
 - record every retro run routed into the checklist; use a short `Retro runs` list when a checklist contains more than one run
 
 ## Thread Notes
