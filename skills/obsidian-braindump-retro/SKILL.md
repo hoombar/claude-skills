@@ -86,22 +86,24 @@ Every action checklist created by this workflow must include this exact control 
 
 This checkbox records whether the user has manually reviewed the checklist as a batch. It is independent of the completion state of the individual actions below it.
 
-Before routing a run, inspect every Markdown file under `runtime/actions/`, including files that do not follow the preferred filename pattern, and count the checklists containing an unchecked `Triage complete` control.
+Before routing a run, inspect every Markdown file under `runtime/actions/`, including files that do not follow the preferred filename pattern, and count the checklists containing an unchecked `Triage complete` control. The active checklist filename must match the date of the retro run.
 
-- Exactly one unchecked checklist: treat it as the active checklist and merge this run's new actions and clarifying questions into it.
+- Exactly one unchecked checklist dated today: update it in place for an additional same-day run.
+- Exactly one unchecked checklist from an earlier date: roll it forward. Copy its actions, headings, clarifying questions, links, notes, and individual checkbox states into a new `braindump-retro-actions-YYYY-MM-DD.md` for today's run; check `Triage complete` in the previous file and add a `Rolled forward to [[new-checklist]]` note.
 - No unchecked checklist: create `braindump-retro-actions-YYYY-MM-DD.md` with an unchecked `Triage complete` control.
 - More than one unchecked checklist: do not choose or combine them automatically. Ask the user which checklist should remain active.
-- A legacy checklist with no `Triage complete` control is historical and closed for merge purposes, but still load it when needed for semantic duplicate detection.
+- A legacy checklist with no `Triage complete` control is historical and closed for rollover purposes, but still load it when needed for semantic duplicate detection.
 
-Only the user marks `Triage complete`. Never check it automatically, infer it from individual action checkboxes, or reopen a checked checklist.
+Normally only the user marks `Triage complete`. The workflow may check it automatically only when rolling that checklist into a new run-dated file. Never infer triage state from individual action checkboxes or reopen a checked checklist.
 
-When merging into the active checklist:
+When rolling forward or updating a same-day checklist:
 
 - preserve all existing action checkbox states, headings, questions, links, and notes
 - semantically deduplicate new actions against existing checklist content and durable destination notes
 - append actions under an existing matching heading when practical, creating a concise heading only when needed
-- preserve `captured`, update `updated`, and record the additional retro run in the checklist
-- keep a separate retro receipt for the new run and point it at the reused checklist path
+- use the current run date for the new checklist's filename, title, `captured`, and `updated` values
+- record only the current file's retro runs and link a rolled checklist back to its predecessor with `Rolled forward from [[previous-checklist]]`
+- keep a separate retro receipt for the new run and point it at the current run-dated checklist
 
 ## Core Model
 
@@ -164,7 +166,7 @@ For each note in scope:
 
 1. Scan daily notes in all configured active and archive locations from the adoption date onward
 2. Extract only content after each note's last processed cursor
-3. Load all action checklists under `runtime/actions/`, identify the active checklist from the exact `Triage complete` control, and inspect current and recent checklists for semantic duplicates
+3. Load all action checklists under `runtime/actions/`, identify and roll forward any older active checklist using the exact `Triage complete` control, and inspect current and recent checklists for semantic duplicates
 4. Load the active thread index
 5. Load only the thread notes that appear relevant
 6. Classify each remaining capture:
@@ -189,7 +191,7 @@ For each note in scope:
    - project ideas go into that project's existing ideas, plan, or next-steps note
    - one-off follow-ups go into the run action checklist
 9. Create a slim retro receipt
-10. Merge into the single active unchecked checklist, or create a new unchecked checklist when none is active
+10. Update the current run-dated unchecked checklist with new unique actions and clarifying questions
 11. Update thread notes and the active thread index
 12. Advance the inline cursor in each successfully processed daily note
 13. Propose any other edits to user-owned notes before making them
