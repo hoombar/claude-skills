@@ -19,7 +19,7 @@ class SkillCronResultTests(unittest.TestCase):
             "settings": {"default_skill_executor": "opencode"},
             "skill_executors": {
                 "opencode": {
-                    "argv": ["opencode", "run", "--model", "openai/gpt-5.5", "--variant", "default"],
+                    "argv": ["opencode", "run", "--model", "openai/gpt-5.6-luna", "--variant", "default"],
                     "timeout_seconds": 1800,
                 }
             },

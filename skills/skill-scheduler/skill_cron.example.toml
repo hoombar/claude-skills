@@ -5,7 +5,7 @@ max_jobs_per_tick = 3
 default_skill_executor = "opencode"
 
 [skill_executors.opencode]
-argv = ["/usr/local/bin/opencode", "run", "--attach", "http://127.0.0.1:4096", "--dir", "/path/to/workspace", "--model", "openai/gpt-5.5", "--variant", "default"]
+argv = ["/usr/local/bin/opencode", "run", "--attach", "http://127.0.0.1:4096", "--dir", "/path/to/workspace", "--model", "openai/gpt-5.6-luna", "--variant", "default"]
 timeout_seconds = 3600
 
 [[notifications]]
