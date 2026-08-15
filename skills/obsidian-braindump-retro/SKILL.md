@@ -79,6 +79,34 @@ Recommended runtime files:
 
 The runtime area is AI-managed state. Keep it separate from the daily notes themselves.
 
+## Action Checklist Triage State
+
+Every action checklist created by this workflow must include this exact control near the top of the note:
+
+```md
+- [ ] **Triage complete**
+```
+
+This checkbox records whether the user has manually reviewed the checklist as a batch. It is independent of the completion state of the individual actions below it.
+
+Before routing a run, inspect every Markdown file under `runtime/actions/`, including files that do not follow the preferred filename pattern, and count the checklists containing an unchecked `Triage complete` control.
+
+- Exactly one unchecked checklist: treat it as the active checklist and merge this run's new actions and clarifying questions into it.
+- No unchecked checklist: create `braindump-retro-actions-YYYY-MM-DD.md` with an unchecked `Triage complete` control.
+- More than one unchecked checklist: do not choose or combine them automatically. Ask the user which checklist should remain active.
+- A legacy checklist with no `Triage complete` control is historical and closed for merge purposes, but still load it when needed for semantic duplicate detection.
+
+Only the user marks `Triage complete`. Never check it automatically, infer it from individual action checkboxes, or reopen a checked checklist.
+
+When merging into the active checklist:
+
+- preserve all existing action checkbox states, headings, questions, links, and notes
+- semantically deduplicate new actions against existing checklist content and durable destination notes
+- append actions under an existing matching heading when practical, creating a concise heading only when needed
+- preserve `captured`, update `updated`, and record the additional review window in the checklist
+- keep a separate retro receipt, ledger update, and checkpoint update for the new run
+- point new ledger `routed_to` values and the new retro receipt at the reused checklist path
+
 ## Core Model
 
 Treat these as two different things:
@@ -141,7 +169,7 @@ Assign each capture a stable id using the note date plus ordinal position.
 1. Determine the review window from the checkpoint
 2. Load marked daily-note captures in that window
 3. Load only the monthly log partitions touched by that window
-4. Load current and recent action checklists under `runtime/actions/` to detect semantic duplicates before adding new actions
+4. Load all action checklists under `runtime/actions/`, identify the active checklist from the exact `Triage complete` control, and inspect current and recent checklists for semantic duplicates
 5. Load the active thread index
 6. Load only the thread notes that appear relevant
 7. Assign stable ids using note date plus ordinal position
@@ -168,7 +196,7 @@ Assign each capture a stable id using the note date plus ordinal position.
    - project ideas go into that project's existing ideas, plan, or next-steps note
    - one-off follow-ups go into the run action checklist
 12. Create a slim retro receipt
-13. Create or update a high-signal action checklist
+13. Merge into the single active unchecked checklist, or create a new unchecked checklist when none is active
 14. Update the monthly log, thread notes, and checkpoint state
 15. Propose any edits to user-owned notes before making them
 
@@ -208,10 +236,12 @@ Do not include long reasoning, long raw captures, thread essays, or broad synthe
 
 The action checklist is the main user-facing output. Keep it short, high signal, and directly triageable:
 
+- include the exact `- [ ] **Triage complete**` control near the top of every new checklist
 - one checkbox per action
 - link the relevant destination note when useful
 - avoid explanation unless needed to make the action executable
 - include a `Clarifying Questions` section when captures were ambiguous or when routing required an assumption
+- record every review window routed into the checklist; use a short `Source windows` list when a checklist contains more than one run
 
 ## Thread Notes
 
