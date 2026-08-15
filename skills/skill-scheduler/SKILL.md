@@ -1,7 +1,7 @@
 ---
 name: skill-scheduler
-description: Run a single cron-invoked scheduler that dispatches recurring Claude skills, scripts, and deterministic handlers from local TOML config. Use when the user wants to consolidate cron jobs, schedule existing skills such as Kobo EPUB or YouTube podcast generation, add recurring agentic workflows, inspect scheduler state, or debug scheduled skill execution.
-allowed-tools: Bash(python3 *), Bash(flock *), Bash(timeout *), Bash(claude *), Bash(codex *), Bash(git *)
+description: Run a single cron-invoked scheduler that dispatches recurring agent skills, scripts, and deterministic handlers from local TOML config. Use when the user wants to consolidate cron jobs, schedule existing skills, add recurring agentic workflows, inspect scheduler state, or debug scheduled skill execution.
+allowed-tools: Bash(python3 *), Bash(flock *), Bash(timeout *), Bash(opencode *), Bash(git *)
 ---
 
 # Skill Scheduler
@@ -35,11 +35,12 @@ cp <skill-dir>/skill_cron.example.toml <skill-dir>/skill_cron.toml
 2. Edit `skill_cron.toml`:
 
 - Set `settings.state_dir` to a durable local directory on the machine that runs cron.
-- Add one `commands.<id>.argv` entry per allowed script or skill invocation.
+- Add one `commands.<id>.argv` entry per allowed deterministic script.
+- Configure one `skill_executors.<id>.argv` and set `settings.default_skill_executor` for agentic skill jobs.
 - Add one `[[jobs]]` entry per scheduled recurring workflow.
 - Optionally add `[[notifications]]` entries for completion or failure alerts.
 - Keep commands as argv arrays. Do not use shell strings for routine automation.
-- Set `commands.<id>.log_path` when a job should continue writing to an existing per-job log file.
+- Set `commands.<id>.log_path` for scripts or `jobs.log_path` for skill jobs.
 
 3. Test the config:
 

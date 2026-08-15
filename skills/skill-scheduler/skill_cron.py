@@ -133,26 +133,26 @@ def validate_config(config: dict[str, Any]) -> None:
     if "state_dir" not in settings:
         raise ConfigError("settings.state_dir is required")
     commands = config.get("commands", {})
-    if not isinstance(commands, dict) or not commands:
-        raise ConfigError("At least one [commands.<id>] table is required")
+    if not isinstance(commands, dict):
+        raise ConfigError("[commands] must be a TOML table")
     for command_id, command in commands.items():
-        if not isinstance(command, dict):
-            raise ConfigError(f"commands.{command_id} must be a table")
-        argv = command.get("argv")
-        if not isinstance(argv, list) or not argv or not all(isinstance(item, str) and item for item in argv):
-            raise ConfigError(f"commands.{command_id}.argv must be a non-empty string array")
-        timeout = command.get("timeout_seconds", 3600)
-        if not isinstance(timeout, int) or timeout <= 0:
-            raise ConfigError(f"commands.{command_id}.timeout_seconds must be a positive integer")
-        log_path = command.get("log_path")
-        if log_path is not None and not isinstance(log_path, str):
-            raise ConfigError(f"commands.{command_id}.log_path must be a string when set")
+        validate_runnable(command, f"commands.{command_id}")
+    executors = config.get("skill_executors", {})
+    if not isinstance(executors, dict):
+        raise ConfigError("[skill_executors] must be a TOML table")
+    for executor_id, executor in executors.items():
+        validate_runnable(executor, f"skill_executors.{executor_id}")
+    default_executor = settings.get("default_skill_executor")
+    if default_executor is not None and default_executor not in executors:
+        raise ConfigError(f"settings.default_skill_executor references unknown executor {default_executor!r}")
+    if not commands and not executors:
+        raise ConfigError("At least one command or skill executor is required")
     jobs = config.get("jobs", [])
     if not isinstance(jobs, list):
         raise ConfigError("[[jobs]] entries are required")
     seen_ids: set[str] = set()
     for job in jobs:
-        validate_job(job, commands, seen_ids)
+        validate_job(job, commands, executors, default_executor, seen_ids)
     notifications = config.get("notifications", [])
     if notifications is None:
         return
@@ -163,7 +163,27 @@ def validate_config(config: dict[str, Any]) -> None:
         validate_notification(notification, seen_notification_ids, seen_ids)
 
 
-def validate_job(job: Any, commands: dict[str, Any], seen_ids: set[str]) -> None:
+def validate_runnable(runnable: Any, label: str) -> None:
+    if not isinstance(runnable, dict):
+        raise ConfigError(f"{label} must be a table")
+    argv = runnable.get("argv")
+    if not isinstance(argv, list) or not argv or not all(isinstance(item, str) and item for item in argv):
+        raise ConfigError(f"{label}.argv must be a non-empty string array")
+    timeout = runnable.get("timeout_seconds", 3600)
+    if not isinstance(timeout, int) or timeout <= 0:
+        raise ConfigError(f"{label}.timeout_seconds must be a positive integer")
+    log_path = runnable.get("log_path")
+    if log_path is not None and not isinstance(log_path, str):
+        raise ConfigError(f"{label}.log_path must be a string when set")
+
+
+def validate_job(
+    job: Any,
+    commands: dict[str, Any],
+    executors: dict[str, Any],
+    default_executor: Any,
+    seen_ids: set[str],
+) -> None:
     if not isinstance(job, dict):
         raise ConfigError("Each [[jobs]] entry must be a table")
     job_id = job.get("id")
@@ -173,8 +193,26 @@ def validate_job(job: Any, commands: dict[str, Any], seen_ids: set[str]) -> None
         raise ConfigError(f"Duplicate job id: {job_id}")
     seen_ids.add(job_id)
     command_id = job.get("command_id")
-    if command_id not in commands:
+    skill = job.get("skill")
+    if (command_id is None) == (skill is None):
+        raise ConfigError(f"Job {job_id} requires exactly one of command_id or skill")
+    if command_id is not None and command_id not in commands:
         raise ConfigError(f"Job {job_id} references unknown command_id {command_id!r}")
+    if skill is not None:
+        if not isinstance(skill, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]+", skill):
+            raise ConfigError(f"Job {job_id} skill must contain only letters, numbers, dots, underscores, and hyphens")
+        executor_id = job.get("executor_id", default_executor)
+        if executor_id not in executors:
+            raise ConfigError(f"Job {job_id} references unknown skill executor {executor_id!r}")
+        instructions = job.get("instructions")
+        if instructions is not None and not isinstance(instructions, str):
+            raise ConfigError(f"Job {job_id} instructions must be a string when set")
+        timeout = job.get("timeout_seconds")
+        if timeout is not None and (not isinstance(timeout, int) or timeout <= 0):
+            raise ConfigError(f"Job {job_id} timeout_seconds must be a positive integer when set")
+        log_path = job.get("log_path")
+        if log_path is not None and not isinstance(log_path, str):
+            raise ConfigError(f"Job {job_id} log_path must be a string when set")
     schedule = job.get("schedule")
     if not isinstance(schedule, dict):
         raise ConfigError(f"Job {job_id} requires schedule table")
@@ -515,7 +553,22 @@ def is_due(job: dict[str, Any], job_state: dict[str, Any], now: dt.datetime) -> 
 
 
 def command_for_job(config: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
-    return config["commands"][job["command_id"]]
+    command_id = job.get("command_id")
+    if command_id is not None:
+        return config["commands"][command_id]
+    executor_id = job.get("executor_id") or config["settings"]["default_skill_executor"]
+    command = dict(config["skill_executors"][executor_id])
+    title = str(job.get("title", job["id"]))
+    prompt = f"Run the {job['skill']} skill as the scheduled job {job['id']}."
+    instructions = str(job.get("instructions", "")).strip()
+    if instructions:
+        prompt = f"{prompt} {instructions}"
+    command["argv"] = [*command["argv"], "--title", f"Scheduled skill: {title}", prompt]
+    if "timeout_seconds" in job:
+        command["timeout_seconds"] = job["timeout_seconds"]
+    if "log_path" in job:
+        command["log_path"] = job["log_path"]
+    return command
 
 
 def run_job(
@@ -566,7 +619,8 @@ def run_job(
             record = {
                 "job_id": job_id,
                 "title": job.get("title", job_id),
-                "command_id": job["command_id"],
+                "command_id": job.get("command_id"),
+                "skill": job.get("skill"),
                 "started_at": iso(started),
                 "finished_at": iso(finished),
                 "status": status,
@@ -605,7 +659,8 @@ def run_job(
         record = {
             "job_id": job_id,
             "title": job.get("title", job_id),
-            "command_id": job["command_id"],
+            "command_id": job.get("command_id"),
+            "skill": job.get("skill"),
             "started_at": iso(now),
             "finished_at": iso(finished),
             "status": "timeout",
@@ -634,7 +689,8 @@ def run_job(
         record = {
             "job_id": job_id,
             "title": job.get("title", job_id),
-            "command_id": job["command_id"],
+            "command_id": job.get("command_id"),
+            "skill": job.get("skill"),
             "started_at": iso(now),
             "finished_at": iso(finished),
             "status": "failed",
@@ -662,6 +718,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"config: {config_path}")
     print(f"state_dir: {path}")
     print(f"commands: {len(config.get('commands', {}))}")
+    print(f"skill_executors: {len(config.get('skill_executors', {}))}")
     print(f"jobs: {len(config.get('jobs', []))}")
     print("ok")
     return 0

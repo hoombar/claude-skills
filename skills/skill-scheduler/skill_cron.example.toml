@@ -2,6 +2,11 @@
 # Use a durable state directory on the machine that runs cron.
 state_dir = "/home/ben/.local/state/skill-cron"
 max_jobs_per_tick = 3
+default_skill_executor = "opencode"
+
+[skill_executors.opencode]
+argv = ["/usr/local/bin/opencode", "run", "--attach", "http://127.0.0.1:4096", "--dir", "/path/to/workspace", "--model", "openai/gpt-5.5", "--variant", "default"]
+timeout_seconds = 3600
 
 [[notifications]]
 id = "phone"
@@ -26,11 +31,6 @@ timeout_seconds = 3600
 # Placeholder for a future deterministic maintenance check handler.
 argv = ["/usr/bin/python3", "/home/ben/bin/maintenance_check.py"]
 timeout_seconds = 300
-
-[commands.weekly_review]
-# Disabled in the example until unattended agentic behavior is explicit.
-argv = ["/usr/local/bin/claude", "--print", "Run the weekly review skill"]
-timeout_seconds = 1800
 
 [[jobs]]
 id = "kobo-epub"
@@ -57,5 +57,8 @@ schedule = { every = "15m" }
 id = "weekly-review"
 title = "Weekly Review"
 enabled = false
-command_id = "weekly_review"
+skill = "weekly-review"
+instructions = "Follow the workspace instructions and write only approved outputs."
+timeout_seconds = 1800
+log_path = "/home/ben/logs/weekly_review.log"
 schedule = { weekly = "sun 18:00" }

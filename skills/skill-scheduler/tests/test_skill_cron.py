@@ -14,6 +14,33 @@ SPEC.loader.exec_module(scheduler)
 
 
 class SkillCronResultTests(unittest.TestCase):
+    def test_skill_job_uses_default_executor_once(self):
+        config = {
+            "settings": {"default_skill_executor": "opencode"},
+            "skill_executors": {
+                "opencode": {
+                    "argv": ["opencode", "run", "--model", "openai/gpt-5.5", "--variant", "default"],
+                    "timeout_seconds": 1800,
+                }
+            },
+        }
+        job = {"id": "retro", "title": "Weekly Retro", "skill": "braindump-retro", "instructions": "Use the vault workflow."}
+        command = scheduler.command_for_job(config, job)
+        self.assertEqual(command["argv"][:6], config["skill_executors"]["opencode"]["argv"])
+        self.assertEqual(command["argv"][-3:-1], ["--title", "Scheduled skill: Weekly Retro"])
+        self.assertIn("Run the braindump-retro skill", command["argv"][-1])
+        self.assertEqual(command["timeout_seconds"], 1800)
+
+    def test_skill_job_requires_configured_executor(self):
+        with self.assertRaisesRegex(scheduler.ConfigError, "unknown skill executor"):
+            scheduler.validate_job(
+                {"id": "retro", "skill": "braindump-retro", "schedule": {"weekly": "sun 18:00"}},
+                {},
+                {},
+                None,
+                set(),
+            )
+
     def test_reads_and_removes_valid_result(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "result.json"

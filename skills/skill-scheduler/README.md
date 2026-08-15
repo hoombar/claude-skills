@@ -26,6 +26,11 @@ The scheduler reads `skill_cron.toml` by default.
 [settings]
 state_dir = "/home/ben/.local/state/skill-cron"
 max_jobs_per_tick = 3
+default_skill_executor = "opencode"
+
+[skill_executors.opencode]
+argv = ["/usr/local/bin/opencode", "run", "--attach", "http://127.0.0.1:4096", "--dir", "/path/to/workspace", "--model", "openai/gpt-5.5", "--variant", "default"]
+timeout_seconds = 3600
 
 [[notifications]]
 id = "phone"
@@ -46,6 +51,15 @@ title = "Example Job"
 enabled = true
 command_id = "example"
 schedule = { weekly = "mon,thu 05:00" }
+
+[[jobs]]
+id = "weekly-review"
+title = "Weekly Review"
+enabled = true
+skill = "weekly-review"
+instructions = "Follow the workspace instructions."
+log_path = "/path/to/logs/weekly-review.log"
+schedule = { weekly = "sun 18:00" }
 ```
 
 Schedules support:
@@ -69,6 +83,8 @@ python3 skill_cron.py tick --quiet
 python3 skill_cron.py run <job-id>
 python3 skill_cron.py run <job-id> --dry-run
 ```
+
+Script jobs reference a registered `command_id`. Agentic jobs set `skill` and inherit `settings.default_skill_executor`; use `executor_id` only when a job genuinely needs a different executor. The scheduler appends the job title and generated skill prompt to the executor argv, so the OpenCode server, model, and effort are defined once.
 
 ## State
 
@@ -114,7 +130,8 @@ For ntfy providers, `click_url` sets the notification tap target and adds an exp
 ## Design Notes
 
 - Scheduling and locking are deterministic Python, not LLM reasoning.
-- Jobs dispatch to explicit argv arrays, never shell strings.
+- Script jobs dispatch to explicit argv arrays, never shell strings.
+- Skill jobs inherit one explicit executor argv and add only their generated prompt.
 - Agentic skills should usually be slow-cadence and checkpoint-driven.
 - High-frequency jobs should usually run cheap deterministic handlers that exit quickly when there is no new work.
 
