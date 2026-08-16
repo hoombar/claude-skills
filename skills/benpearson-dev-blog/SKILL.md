@@ -266,7 +266,7 @@ If Ben provides sentences, paragraphs, or sections he dislikes:
 2. Briefly explain what changed and why.
 3. Extract any durable writing preference that should apply to future posts.
 4. Propose the preference rule before writing it down.
-5. If Ben approves, update `references/ben-blog-feedback-patterns.md` in both the local skill and the `~/dev/claude-skills` repo copy when available.
+5. If Ben approves, update `references/ben-blog-feedback-patterns.md` in both the installed skill and the `~/dev/agent-skills` repo copy when available.
 
 Feedback examples worth capturing:
 

@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: install-skills <agents|opencode|claude> [skill ...]
+
+Symlink all skills, or the named skills, into a user-level discovery directory.
+  agents   ~/.agents/skills (OpenCode and Codex)
+  opencode ~/.config/opencode/skills
+  claude   ~/.claude/skills
+EOF
+}
+
+if [[ $# -lt 1 ]]; then
+  usage >&2
+  exit 2
+fi
+
+target_name=$1
+shift
+
+case "$target_name" in
+  agents) target_root="$HOME/.agents/skills" ;;
+  opencode) target_root="$HOME/.config/opencode/skills" ;;
+  claude) target_root="$HOME/.claude/skills" ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
+
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+skills_root="$repo_root/skills"
+mkdir -p -- "$target_root"
+
+if [[ $# -eq 0 ]]; then
+  shopt -s nullglob
+  skill_paths=("$skills_root"/*)
+else
+  skill_paths=()
+  for skill_name in "$@"; do
+    skill_paths+=("$skills_root/$skill_name")
+  done
+fi
+
+for skill_path in "${skill_paths[@]}"; do
+  skill_name=$(basename -- "$skill_path")
+  skill_file="$skill_path/SKILL.md"
+  link_path="$target_root/$skill_name"
+
+  if [[ ! -f "$skill_file" ]]; then
+    printf 'Not a skill: %s\n' "$skill_path" >&2
+    exit 1
+  fi
+
+  if [[ -e "$link_path" && ! -L "$link_path" ]]; then
+    printf 'Refusing to replace existing path: %s\n' "$link_path" >&2
+    exit 1
+  fi
+
+  ln -sfn -- "$skill_path" "$link_path"
+  printf 'Linked %s -> %s\n' "$link_path" "$skill_path"
+done
