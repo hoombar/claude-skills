@@ -32,6 +32,11 @@ timeout_seconds = 3600
 argv = ["/usr/bin/python3", "/home/ben/bin/maintenance_check.py"]
 timeout_seconds = 300
 
+[commands.voice_mcp_health]
+argv = ["/home/ben/.nvm/versions/node/v24.14.0/bin/node", "/home/ben/dev/minibot-voice-mcp/scripts/health-check.js"]
+timeout_seconds = 180
+log_path = "/home/ben/logs/voice-mcp-health.log"
+
 [[jobs]]
 id = "kobo-epub"
 title = "Kobo Deep Dive EPUB"
@@ -52,6 +57,13 @@ title = "Maintenance Check"
 enabled = false
 command_id = "maintenance_check"
 schedule = { every = "15m" }
+
+[[jobs]]
+id = "voice-mcp-health"
+title = "Voice MCP Health Check"
+enabled = false
+command_id = "voice_mcp_health"
+schedule = { daily_at = "06:00" }
 
 [[jobs]]
 id = "weekly-review"
