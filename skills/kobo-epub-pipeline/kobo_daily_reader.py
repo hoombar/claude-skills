@@ -2078,10 +2078,12 @@ def write_epub_cover(work_dir, title, publisher, publication_date="", source_lab
     title_lines = title_lines[:5]
 
     title_svg = []
-    start_y = 275 - (len(title_lines) * 28)
+    # Keep the title below the kicker and give 72px text enough line height.
+    title_start_y = 330
+    title_line_height = 82
     for idx, line in enumerate(title_lines):
         title_svg.append(
-            f'<text x="80" y="{start_y + idx * 58}" class="title">'
+            f'<text x="80" y="{title_start_y + idx * title_line_height}" class="title">'
             f"{html.escape(line)}</text>"
         )
 
