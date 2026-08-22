@@ -35,7 +35,7 @@ tags:
 ---
 ```
 
-`content_type` must be `post` or `lab`. Use `lab` for experiments, build notes, implementation write-ups, and rougher practical notes. Use `post` for more polished articles.
+`content_type` must be `post`, `lab`, or `thought`. Use `post` for more polished articles, `lab` for experiments, build notes, implementation write-ups, and rougher practical notes, and `thought` for standalone ideas or observations that do not need a project or code behind them.
 
 ## Workflow
 
@@ -99,6 +99,7 @@ Before writing the file, decide whether the post is mainly:
 - A practical engineering narrative.
 - A reflective personal post.
 - A lab note or implementation write-up.
+- A standalone thought or observation.
 - A hybrid of those forms.
 
 ### Pass 2: Critic
